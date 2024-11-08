@@ -20,6 +20,7 @@ from rich.progress import (
 import torch.cuda.amp
 import functools
 import numpy as np
+from universa.utils.agent_compute import agent_cache
 
 # Timing dictionaries
 step_times = {}
@@ -56,26 +57,34 @@ def select_best_agent(  #
     result = chroma.query_data(query_text=[query])
 
     documents = result["documents"][0]
-    distances = result["distances"][0]
-    max_distance = max(distances)
-    max_responses = max(agent.rated_responses for agent in agents)
-    agent_lookup = {agent.description: agent for agent in agents}
+    distances = np.array(result["distances"][0])
 
-    normalized_distances = np.array(distances) / max_distance
+    # Use cached values
+    cache_values = agent_cache.values
+    agent_lookup = cache_values["agent_lookup"]
+    max_responses = cache_values["max_responses"]
     agents_list = [agent_lookup[doc] for doc in documents]
 
-    response_weights = np.array(
-        [0.2 + (0.1 * (agent.rated_responses / max_responses)) for agent in agents_list]
-    )
+    # Vectorized calculations
+    rated_responses = np.array([agent.rated_responses for agent in agents_list])
+    response_weights = 0.2 + (0.1 * (rated_responses / max_responses))
+    distance_weights = 1 - response_weights
 
+    # Normalize distances in single operation
+    normalized_distances = distances / distances.max()
+
+    # Compute ratings in single operation
     normalized_ratings = np.array(
         [
-            agent.average_rating / max_rating if max_rating > 0 else 0
+            (
+                agent.average_rating / cache_values["max_rating"]
+                if cache_values["max_rating"] > 0
+                else 0
+            )
             for agent in agents_list
         ]
     )
 
-    distance_weights = 1 - response_weights
     combined_scores = (
         1 - normalized_distances**2
     ) * distance_weights + normalized_ratings * response_weights
@@ -212,9 +221,10 @@ def main():
     else:
         console.print("[yellow]GPU not available, using CPU[/yellow]")
 
-    # Load agents
+    # Load agents and initialize cache
     step_start = time.time()
     agents = load_agents()
+    agent_cache.initialize(agents)
     max_rating = max(agent.average_rating for agent in agents)
     step_times["load_agents"] = time.time() - step_start
 

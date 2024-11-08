@@ -145,10 +145,10 @@ Selected Agent: Financial Advisor
 Performance Metrics:
 
 Timing Breakdown:
-Setup/overhead time: 8.52 seconds
+Setup/overhead time: 7.96 seconds
 Loading agents: 0.00 seconds
-Initializing ChromaDB: 8.52 seconds
+Initializing ChromaDB: 7.95 seconds
 Adding descriptions: 0.00 seconds
-Query processing time: 9.57 seconds
-Average query time: 0.2035 seconds
-Total execution time: 18.67 seconds
+Query processing time: 8.66 seconds
+Average query time: 0.1842 seconds
+Total execution time: 17.14 seconds

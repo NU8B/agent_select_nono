@@ -7,6 +7,7 @@ from typing import List, Dict, Tuple
 from rich.console import Console
 import functools
 import numpy as np
+from universa.utils.agent_compute import agent_cache
 
 
 @functools.lru_cache(maxsize=1)
@@ -39,26 +40,26 @@ def select_best_agent(
     result = chroma.query_data(query_text=[query])
 
     documents = result["documents"][0]
-    distances = result["distances"][0]
-    max_distance = max(distances)
-    max_responses = max(agent.rated_responses for agent in agents)
-    agent_lookup = {agent.description: agent for agent in agents}
+    distances = np.array(result["distances"][0])
 
-    normalized_distances = np.array(distances) / max_distance
+    # Use cached values
+    cache_values = agent_cache.values
+    agent_lookup = cache_values["agent_lookup"]
+    agent_values = cache_values["agent_values"]
+
+    # Get pre-calculated values for matched agents
     agents_list = [agent_lookup[doc] for doc in documents]
+    agent_data = [agent_values[doc] for doc in documents]
 
-    response_weights = np.array(
-        [0.2 + (0.1 * (agent.rated_responses / max_responses)) for agent in agents_list]
-    )
+    # Get pre-calculated weights
+    response_weights = np.array([data["response_weight"] for data in agent_data])
+    distance_weights = np.array([data["distance_weight"] for data in agent_data])
+    normalized_ratings = np.array([data["normalized_rating"] for data in agent_data])
 
-    normalized_ratings = np.array(
-        [
-            agent.average_rating / max_rating if max_rating > 0 else 0
-            for agent in agents_list
-        ]
-    )
+    # Normalize distances in single operation
+    normalized_distances = distances / distances.max()
 
-    distance_weights = 1 - response_weights
+    # Compute final scores
     combined_scores = (
         1 - normalized_distances**2
     ) * distance_weights + normalized_ratings * response_weights
@@ -66,24 +67,20 @@ def select_best_agent(
     best_idx = np.argmax(combined_scores)
     best_agent = agents_list[best_idx]
 
+    # Create selection details using pre-calculated values
     selection_details = [
         {
-            "agent_name": agent.name,
+            "agent_name": data["name"],
             "distance": float(dist),
             "normalized_distance": float(norm_dist),
-            "average_rating": float(agent.average_rating),
-            "normalized_rating": float(norm_rating),
-            "rating_weight": float(weight),
+            "average_rating": float(data["average_rating"]),
+            "normalized_rating": float(data["normalized_rating"]),
+            "rating_weight": float(data["response_weight"]),
             "combined_score": float(score),
-            "rated_responses": agent.rated_responses,
+            "rated_responses": data["rated_responses"],
         }
-        for agent, dist, norm_dist, norm_rating, weight, score in zip(
-            agents_list,
-            distances,
-            normalized_distances,
-            normalized_ratings,
-            response_weights,
-            combined_scores,
+        for data, dist, norm_dist, score in zip(
+            agent_data, distances, normalized_distances, combined_scores
         )
     ]
 
@@ -103,9 +100,9 @@ def main():
     else:
         console.print("[yellow]GPU not available, using CPU[/yellow]")
 
-    # Load agents
+    # Load agents and initialize cache
     agents = load_agents()
-    max_rating = max(agent.average_rating for agent in agents)
+    agent_cache.initialize(agents)
 
     # Initialize ChromaDB
     chroma = ChromaDB(collection_name="agent_descriptions")
@@ -125,11 +122,12 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         _ = chroma.query_data(query_text=["warmup query"])
+
     import time
 
     query_start = time.time()
     query = QUERY
-    best_agent, selection_details = select_best_agent(agents, query, chroma, max_rating)
+    best_agent, selection_details = select_best_agent(agents, query, chroma)
     query_time = time.time() - query_start
 
     # Print results

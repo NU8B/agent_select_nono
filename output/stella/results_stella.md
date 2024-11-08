@@ -1655,6 +1655,6 @@
 
 ## Performance Metrics
 
-- **Total execution time**: 18.67 seconds
-- **Average query time**: 0.2035 seconds
-- **Total query processing time**: 9.57 seconds
+- **Total execution time**: 17.14 seconds
+- **Average query time**: 0.1842 seconds
+- **Total query processing time**: 8.66 seconds
