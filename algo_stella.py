@@ -149,44 +149,65 @@ def write_results(
 
 
 def write_benchmark_results(predictions: dict, output_dir: str) -> None:
-    """Write benchmark results to output files"""
+    """Write benchmark results to output files with incorrect predictions highlighted at the top"""
     metrics = get_benchmark_metrics(predictions)
     detailed_results = get_detailed_results(predictions)
 
-    # Write to markdown file
+    # Sort results to put incorrect predictions first
+    incorrect_results = []
+    correct_results = []
+
     with open(
-        os.path.join(output_dir, "results_stella.md"), "r+", encoding="utf-8"
+        os.path.join(output_dir, "results_stella.md"), "r", encoding="utf-8"
     ) as f:
         content = f.read()
-        f.seek(0)
+        sections = content.split("## Query:")
+        header = sections[0]  # Save the header section
+
+        for section in sections[1:]:  # Skip header section
+            query = section.split("\n")[0].strip()
+            result = next((r for r in detailed_results if r["query"] == query), None)
+
+            if result:
+                if not result["is_correct"]:
+                    incorrect_results.append((query, section, result))
+                else:
+                    correct_results.append((query, section, result))
+
+    # Write to markdown file with incorrect results first
+    with open(
+        os.path.join(output_dir, "results_stella.md"), "w", encoding="utf-8"
+    ) as f:
+        # Write header
         f.write(f"# Agent Selection Results - Stella\n\n")
         f.write("## Benchmark Summary\n\n")
         f.write(f"**Accuracy**: {metrics['accuracy']:.2%}\n")
         f.write(
             f"**Correct Predictions**: {metrics['correct_predictions']}/{metrics['total_queries']}\n\n"
         )
-        f.write("---\n\n")
 
-        sections = content.split("## Query:")
-        for i, section in enumerate(sections):
-            if i == 0:  # Skip the header section
-                continue
-
-            query = section.split("\n")[0].strip()
-            result = next((r for r in detailed_results if r["query"] == query), None)
-
-            if result:
+        # Write incorrect predictions section
+        if incorrect_results:
+            f.write("## ❌ Incorrect Predictions\n\n")
+            for query, section, result in incorrect_results:
                 f.write("## Query:" + query + "\n")
-                status = (
-                    "[CORRECT]"
-                    if result["is_correct"]
-                    else f"[INCORRECT - Expected: {result['correct_agent']}]"
+                f.write(
+                    f"**Benchmark**: [INCORRECT - Expected: {result['correct_agent']}]**\n\n"
                 )
-                f.write(f"**Benchmark**: {status}\n\n")
                 remaining_content = "\n".join(section.split("\n")[1:])
                 f.write(remaining_content)
-            else:
-                f.write("## Query:" + section)
+            f.write("\n---\n\n")
+
+        # Write correct predictions section
+        if correct_results:
+            f.write("## ✅ Correct Predictions\n\n")
+            for query, section, result in correct_results:
+                f.write("## Query:" + query + "\n")
+                f.write("**Benchmark**: [CORRECT]**\n\n")
+                remaining_content = "\n".join(section.split("\n")[1:])
+                f.write(remaining_content)
+
+        f.write("\n---\n\n")
 
 
 def format_memory(bytes_value: float) -> str:
