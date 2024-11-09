@@ -32,11 +32,10 @@ def write_results(
     expected_agent: str,
     details: List[Dict],
     is_correct: bool,
-    output_dir: str,
-) -> Tuple[str, bool]:
+):
     """Write detailed results for each query"""
     # Store results to be written later in correct order
-    result_text = f"\n## Query: {query}\n"
+    result_text = f"\n## Query:{query}\n"
     result_text += f"**Benchmark**: [{'CORRECT' if is_correct else f'INCORRECT - Expected: {expected_agent}'}]**\n\n"
     result_text += f"\n**Selected Agent**: {agent_name}\n"
     result_text += "\n### Top 3 Agent Matches:\n\n"
@@ -51,10 +50,11 @@ def write_results(
         result_text += f"- **Lexical Score**: {detail['lexical_score']:.4f}\n"
         result_text += f"- **Average Rating**: {detail['average_rating']:.2f}\n"
         result_text += f"- **Rated Responses**: {detail['rated_responses']}\n"
-        result_text += f"- **Distance Weight**: {detail['semantic_weight']:.2f}\n"
+        result_text += f"- **Distance Weight**: {1-detail['rating_weight']-0.15:.2f}\n"
         result_text += f"- **Rating Weight**: {detail['rating_weight']:.2f}\n"
-        result_text += f"- **Lexical Weight**: {detail['lexical_weight']:.2f}\n\n"
+        result_text += f"- **Lexical Weight**: 0.15\n\n"
 
+    result_text += "\n---\n"
     return result_text, is_correct
 
 
@@ -144,7 +144,6 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
                 "lexical_score": float(lex_score),
                 "combined_score": float(score),
                 "rated_responses": data["rated_responses"],
-                "lexical_weight": lexical_weight,
             }
             for data, dist, norm_dist, lex_score, score in zip(
                 agent_data,
