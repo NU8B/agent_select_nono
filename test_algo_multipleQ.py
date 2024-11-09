@@ -113,10 +113,8 @@ def select_best_agent(  #
         )
     ]
 
-    return (
-        best_agent,
-        sorted(selection_details, key=lambda x: x["combined_score"], reverse=True),
-        selection_details,
+    return best_agent, sorted(
+        selection_details, key=lambda x: x["combined_score"], reverse=True
     )
 
 
@@ -128,11 +126,11 @@ def write_results(
 ) -> None:
     """Write results to files with consistent formatting"""
     # Write to text file
-    with open(os.path.join(output_dir, "results_stella.txt"), "a") as txt_file:
+    with open(os.path.join(output_dir, "results_test.txt"), "a") as txt_file:
         txt_file.write(f"Query: {query}\nSelected Agent: {best_agent.name}\n\n")
 
     # Write to markdown file
-    with open(os.path.join(output_dir, "results_stella.md"), "a") as md_file:
+    with open(os.path.join(output_dir, "results_test.md"), "a") as md_file:
         md_file.write(f"## Query: {query}\n\n")
         md_file.write(f"**Selected Agent**: {best_agent.name}\n\n")
         md_file.write("### Top 3 Agent Matches:\n\n")
@@ -151,113 +149,61 @@ def write_results(
 
 
 def write_benchmark_results(predictions: dict, output_dir: str) -> None:
-    """Write benchmark results to output files"""
+    """Write benchmark results to output files with incorrect predictions highlighted at the top"""
     metrics = get_benchmark_metrics(predictions)
     detailed_results = get_detailed_results(predictions)
 
-    # Write to markdown file
-    with open(
-        os.path.join(output_dir, "results_stella.md"), "r+", encoding="utf-8"
-    ) as f:
+    # Sort results to put incorrect predictions first
+    incorrect_results = []
+    correct_results = []
+
+    with open(os.path.join(output_dir, "results_test.md"), "r", encoding="utf-8") as f:
         content = f.read()
-        f.seek(0)
+        sections = content.split("## Query:")
+        header = sections[0]  # Save the header section
+
+        for section in sections[1:]:  # Skip header section
+            query = section.split("\n")[0].strip()
+            result = next((r for r in detailed_results if r["query"] == query), None)
+
+            if result:
+                if not result["is_correct"]:
+                    incorrect_results.append((query, section, result))
+                else:
+                    correct_results.append((query, section, result))
+
+    # Write to markdown file with incorrect results first
+    with open(os.path.join(output_dir, "results_test.md"), "w", encoding="utf-8") as f:
+        # Write header
         f.write(f"# Agent Selection Results - Stella\n\n")
         f.write("## Benchmark Summary\n\n")
         f.write(f"**Accuracy**: {metrics['accuracy']:.2%}\n")
         f.write(
             f"**Correct Predictions**: {metrics['correct_predictions']}/{metrics['total_queries']}\n\n"
         )
-        f.write("---\n\n")
 
-        sections = content.split("## Query:")
-        for i, section in enumerate(sections):
-            if i == 0:  # Skip the header section
-                continue
-
-            query = section.split("\n")[0].strip()
-            result = next((r for r in detailed_results if r["query"] == query), None)
-
-            if result:
+        # Write incorrect predictions section
+        if incorrect_results:
+            f.write("## ❌ Incorrect Predictions\n\n")
+            for query, section, result in incorrect_results:
                 f.write("## Query:" + query + "\n")
-                status = (
-                    "[CORRECT]"
-                    if result["is_correct"]
-                    else f"[INCORRECT - Expected: {result['correct_agent']}]"
+                f.write(
+                    f"**Benchmark**: [INCORRECT - Expected: {result['correct_agent']}]**\n\n"
                 )
-                f.write(f"**Benchmark**: {status}\n\n")
                 remaining_content = "\n".join(section.split("\n")[1:])
                 f.write(remaining_content)
-            else:
-                f.write("## Query:" + section)
+            f.write("\n---\n\n")
 
+        # Write correct predictions section
+        if correct_results:
+            f.write("## ✅ Correct Predictions\n\n")
+            for query, section, result in correct_results:
+                f.write("## Query:" + query + "\n")
+                f.write("**Benchmark**: [CORRECT]**\n\n")
+                remaining_content = "\n".join(section.split("\n")[1:])
+                f.write(remaining_content)
 
-def write_wrong_results(
-    predictions: dict, selection_details_map: dict, output_dir: str
-) -> None:
-    """Write incorrect predictions to separate text and markdown files with detailed selection information"""
-    metrics = get_benchmark_metrics(predictions)
-    detailed_results = get_detailed_results(predictions)
-
-    # Collect incorrect predictions
-    incorrect_results = [r for r in detailed_results if not r["is_correct"]]
-
-    # Write text file version
-    with open(os.path.join(output_dir, "incorrect_predictions.txt"), "w") as f:
-        f.write(f"TOTAL INCORRECT: {len(incorrect_results)}\n\n")
-
-        for idx, result in enumerate(incorrect_results, 1):
-            query = result["query"]
-            details = selection_details_map.get(query, [])
-
-            f.write(f"{idx}/{len(incorrect_results)}\n")
-            f.write(f"Query: {query}\n")
-            f.write(f"Result: {predictions[query]}\n")
-            f.write(f"Correct Result: {result['correct_agent']}\n\n")
-            f.write("Top3 Result:\n")
-
-            if details:
-                for detail in details[:3]:
-                    f.write(f"Agent: {detail['agent_name']}\n")
-                    f.write(f"Combined Score: {detail['combined_score']:.4f}\n")
-                    f.write(f"Distance: {detail['distance']:.4f}\n")
-                    f.write(f"Average Rating: {detail['average_rating']:.2f}\n")
-                    f.write(f"Rated Responses: {detail['rated_responses']}\n")
-                    f.write(f"Distance Weight: {1 - detail['rating_weight']:.2f}\n")
-                    f.write(f"Rating Weight: {detail['rating_weight']:.2f}\n\n")
-
-            f.write("-" * 50 + "\n\n")
-
-    # Write markdown file version
-    with open(os.path.join(output_dir, "incorrect_predictions.md"), "w") as f:
-        f.write(f"# Incorrect Predictions Analysis\n\n")
-        f.write(f"**Total Incorrect Predictions**: {len(incorrect_results)}\n\n")
-        f.write("---\n\n")
-
-        for idx, result in enumerate(incorrect_results, 1):
-            query = result["query"]
-            details = selection_details_map.get(query, [])
-
-            f.write(f"## {idx}. Query Analysis\n\n")
-            f.write(f"**Query**: {query}\n\n")
-            f.write(f"**Selected Agent**: {predictions[query]}\n\n")
-            f.write(f"**Expected Agent**: {result['correct_agent']}\n\n")
-            f.write("### Top 3 Matches:\n\n")
-
-            if details:
-                for detail in details[:3]:
-                    f.write(f"#### {detail['agent_name']}\n")
-                    f.write("| Metric | Value |\n")
-                    f.write("|--------|-------|\n")
-                    f.write(f"| Combined Score | {detail['combined_score']:.4f} |\n")
-                    f.write(f"| Distance | {detail['distance']:.4f} |\n")
-                    f.write(f"| Average Rating | {detail['average_rating']:.2f} |\n")
-                    f.write(f"| Rated Responses | {detail['rated_responses']} |\n")
-                    f.write(
-                        f"| Distance Weight | {1 - detail['rating_weight']:.2f} |\n"
-                    )
-                    f.write(f"| Rating Weight | {detail['rating_weight']:.2f} |\n\n")
-
-            f.write("---\n\n")
+        f.write("\n---\n\n")
 
 
 def format_memory(bytes_value: float) -> str:
@@ -319,13 +265,13 @@ def main():
         step_times["add_descriptions"] = time.time() - step_start
 
     # Setup output directory
-    output_dir = "output/stella"
+    output_dir = "output/test"
     os.makedirs(output_dir, exist_ok=True)
 
     # Initialize files
     for filename, header in [
-        ("results_stella.md", "# Agent Selection Results - Stella\n\n"),
-        ("results_stella.txt", "Agent Selection Results - Stella\n\n"),
+        ("results_test.md", "# Agent Selection Results - Stella\n\n"),
+        ("results_test.txt", "Agent Selection Results - Stella\n\n"),
     ]:
         with open(os.path.join(output_dir, filename), "w") as f:
             f.write(header)
@@ -337,7 +283,6 @@ def main():
 
     # Process queries
     predictions = {}
-    selection_details_map = {}
     total_query_time = 0
 
     with Progress(
@@ -361,7 +306,7 @@ def main():
 
             for query in batch_queries:
                 query_start = time.time()
-                best_agent, selection_details, details = select_best_agent(
+                best_agent, selection_details = select_best_agent(
                     agents, query, chroma, max_rating
                 )
                 query_time = time.time() - query_start
@@ -370,7 +315,6 @@ def main():
                 total_query_time += query_time
 
                 predictions[query] = best_agent.name
-                selection_details_map[query] = details
                 write_results(query, best_agent, selection_details, output_dir)
                 progress.advance(task)
 
@@ -424,10 +368,10 @@ def main():
         f"Total execution time: {total_time:.2f} seconds\n"
     )
 
-    with open(os.path.join(output_dir, "results_stella.txt"), "a") as f:
+    with open(os.path.join(output_dir, "results_test.txt"), "a") as f:
         f.write(metrics_text)
 
-    with open(os.path.join(output_dir, "results_stella.md"), "a") as f:
+    with open(os.path.join(output_dir, "results_test.md"), "a") as f:
         f.write(
             f"\n## Performance Metrics\n\n"
             f"- **Total execution time**: {total_time:.2f} seconds\n"
@@ -436,7 +380,6 @@ def main():
         )
 
     write_benchmark_results(predictions, output_dir)
-    write_wrong_results(predictions, selection_details_map, output_dir)
 
 
 if __name__ == "__main__":
