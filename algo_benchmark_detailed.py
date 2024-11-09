@@ -31,6 +31,7 @@ def write_results(
     agent_name: str,
     expected_agent: str,
     details: List[Dict],
+    output_dir: str,
     is_correct: bool,
 ):
     """Write detailed results for each query"""
@@ -50,9 +51,9 @@ def write_results(
         result_text += f"- **Lexical Score**: {detail['lexical_score']:.4f}\n"
         result_text += f"- **Average Rating**: {detail['average_rating']:.2f}\n"
         result_text += f"- **Rated Responses**: {detail['rated_responses']}\n"
-        result_text += f"- **Distance Weight**: {1-detail['rating_weight']-0.15:.2f}\n"
+        result_text += f"- **Distance Weight**: {detail['semantic_weight']:.2f}\n"
         result_text += f"- **Rating Weight**: {detail['rating_weight']:.2f}\n"
-        result_text += f"- **Lexical Weight**: 0.15\n\n"
+        result_text += f"- **Lexical Weight**: {detail['lexical_weight']:.2f}\n\n"
 
     result_text += "\n---\n"
     return result_text, is_correct
@@ -111,10 +112,10 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
         # Get pre-calculated weights and normalized values
         response_weights = np.array([data["response_weight"] for data in agent_data])
         semantic_weights = np.array([data["semantic_weight"] for data in agent_data])
+        lexical_weights = np.array([data["lexical_weight"] for data in agent_data])
         normalized_ratings = np.array(
             [data["normalized_rating"] for data in agent_data]
         )
-        lexical_weight = 0.20  # Changed to 20%
 
         # Calculate lexical scores
         lexical_scores = np.array(
@@ -128,7 +129,7 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
         combined_scores = (
             (1 - normalized_distances**2) * semantic_weights
             + normalized_ratings * response_weights
-            + lexical_scores * lexical_weight
+            + lexical_scores * lexical_weights
         )
 
         # Create selection details
@@ -144,6 +145,7 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
                 "lexical_score": float(lex_score),
                 "combined_score": float(score),
                 "rated_responses": data["rated_responses"],
+                "lexical_weight": float(data["lexical_weight"]),
             }
             for data, dist, norm_dist, lex_score, score in zip(
                 agent_data,

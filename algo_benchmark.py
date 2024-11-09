@@ -4,6 +4,7 @@ import time
 import numpy as np
 from typing import List, Dict, Tuple, Any
 import time
+from rapidfuzz import fuzz
 
 # Add the project root to Python path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -13,6 +14,11 @@ from benchmark.selection import SelectionAlgorithm
 from benchmark.benchmark import Benchmark
 from universa.memory.chromadb.persistent_chromadb import ChromaDB
 from universa.utils.agent_compute_dict import agent_dict_cache
+
+
+def compute_lexical_score(query: str, description: str) -> float:
+    """Compute normalized lexical similarity score"""
+    return fuzz.token_sort_ratio(query.lower(), description.lower()) / 100.0
 
 
 class StellaAlgorithm(SelectionAlgorithm):
@@ -59,20 +65,28 @@ class StellaAlgorithm(SelectionAlgorithm):
         # Get pre-calculated values for matched agents
         agent_data = [agent_values[doc] for doc in documents]
 
-        # Get pre-calculated weights
+        # Get pre-calculated weights and normalized values
         response_weights = np.array([data["response_weight"] for data in agent_data])
-        distance_weights = np.array([data["distance_weight"] for data in agent_data])
+        semantic_weights = np.array([data["semantic_weight"] for data in agent_data])
+        lexical_weights = np.array([data["lexical_weight"] for data in agent_data])
         normalized_ratings = np.array(
             [data["normalized_rating"] for data in agent_data]
+        )
+
+        # Calculate lexical scores
+        lexical_scores = np.array(
+            [compute_lexical_score(query, doc) for doc in documents]
         )
 
         # Normalize distances
         normalized_distances = distances / distances.max()
 
-        # Compute final scores
+        # Compute final scores with all three components
         combined_scores = (
-            1 - normalized_distances**2
-        ) * distance_weights + normalized_ratings * response_weights
+            (1 - normalized_distances**2) * semantic_weights
+            + normalized_ratings * response_weights
+            + lexical_scores * lexical_weights
+        )
 
         best_idx = np.argmax(combined_scores)
         best_doc = documents[best_idx]
