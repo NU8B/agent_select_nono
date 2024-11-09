@@ -38,7 +38,7 @@ def write_results(
     # Store results to be written later in correct order
     result_text = f"\n## Query:{query}\n"
     result_text += f"**Benchmark**: [{'CORRECT' if is_correct else f'INCORRECT - Expected: {expected_agent}'}]**\n\n"
-    result_text += f"\n**Selected Agent**: {agent_name}\n"
+    result_text += f"**Selected Agent**: {agent_name}\n"
     result_text += "\n### Top 3 Agent Matches:\n\n"
 
     sorted_details = sorted(details, key=lambda x: x["combined_score"], reverse=True)[

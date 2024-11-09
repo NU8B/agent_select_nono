@@ -20,16 +20,23 @@ class AgentComputeCache:
             # Pre-calculate normalized values for each agent
             self.agent_values = {}
             for agent in agents:
+                # Calculate response ratio (0-1)
+                response_ratio = agent.rated_responses / self.max_responses
+
+                # Calculate weights following the same pattern as agent_compute_dict
+                rating_weight = 0.2 + (0.1 * response_ratio)
+                semantic_weight = 0.7 - (0.1 * response_ratio)
+                lexical_weight = 0.1  # Fixed at 10%
+
                 self.agent_values[agent.description] = {
                     "normalized_rating": (
                         agent.average_rating / self.max_rating
                         if self.max_rating > 0
                         else 0
                     ),
-                    "response_weight": 0.2
-                    + (0.1 * (agent.rated_responses / self.max_responses)),
-                    "distance_weight": 1
-                    - (0.2 + (0.1 * (agent.rated_responses / self.max_responses))),
+                    "response_weight": rating_weight,
+                    "semantic_weight": semantic_weight,
+                    "lexical_weight": lexical_weight,
                     "rated_responses": agent.rated_responses,
                     "average_rating": agent.average_rating,
                     "name": agent.name,
