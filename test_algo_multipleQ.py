@@ -281,13 +281,8 @@ def main():
     output_dir = "output/test"
     os.makedirs(output_dir, exist_ok=True)
 
-    # Initialize files
-    for filename, header in [
-        ("test_result.md", "# Agent Selection Results - Test\n\n"),
-        ("test_result.txt", "Agent Selection Results - Test\n\n"),
-    ]:
-        with open(os.path.join(output_dir, filename), "w") as f:
-            f.write(header)
+    with open(os.path.join(output_dir, "test_result.md"), "w") as f:
+        f.write("# Agent Selection Results - Test\n\n")
 
     # Pre-warm model
     if torch.cuda.is_available():
@@ -376,9 +371,6 @@ def main():
         f"Average query time: {avg_query_time:.4f} seconds\n"
         f"Total execution time: {total_time:.2f} seconds\n"
     )
-
-    with open(os.path.join(output_dir, "test_result.txt"), "a") as f:
-        f.write(metrics_text)
 
     with open(os.path.join(output_dir, "test_result.md"), "a") as f:
         f.write(
