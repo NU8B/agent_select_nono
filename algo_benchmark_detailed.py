@@ -236,15 +236,8 @@ def main():
             for result in correct_results:
                 f.write(result)
 
-        # Write performance metrics last
-        f.write("\n## Performance Metrics\n\n")
-        f.write(f"- **Total execution time**: {total_time:.2f} seconds\n")
-        f.write(
-            f"- **Average query time**: {stats['average_query_time']:.4f} seconds\n"
-        )
-        f.write(
-            f"- **Total query processing time**: {stats['total_query_time']:.2f} seconds\n"
-        )
+    # Add completion message
+    console.print(f"\nResults saved to: {(output_dir)}")
 
 
 if __name__ == "__main__":

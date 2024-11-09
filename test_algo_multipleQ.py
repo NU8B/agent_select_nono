@@ -126,11 +126,11 @@ def write_results(
 ) -> None:
     """Write results to files with consistent formatting"""
     # Write to text file
-    with open(os.path.join(output_dir, "results_test.txt"), "a") as txt_file:
+    with open(os.path.join(output_dir, "test_result.txt"), "a") as txt_file:
         txt_file.write(f"Query: {query}\nSelected Agent: {best_agent.name}\n\n")
 
     # Write to markdown file
-    with open(os.path.join(output_dir, "results_test.md"), "a") as md_file:
+    with open(os.path.join(output_dir, "test_result.md"), "a") as md_file:
         md_file.write(f"## Query: {query}\n\n")
         md_file.write(f"**Selected Agent**: {best_agent.name}\n\n")
         md_file.write("### Top 3 Agent Matches:\n\n")
@@ -157,7 +157,7 @@ def write_benchmark_results(predictions: dict, output_dir: str) -> None:
     incorrect_results = []
     correct_results = []
 
-    with open(os.path.join(output_dir, "results_test.md"), "r", encoding="utf-8") as f:
+    with open(os.path.join(output_dir, "test_result.md"), "r", encoding="utf-8") as f:
         content = f.read()
         sections = content.split("## Query:")
         header = sections[0]  # Save the header section
@@ -173,7 +173,7 @@ def write_benchmark_results(predictions: dict, output_dir: str) -> None:
                     correct_results.append((query, section, result))
 
     # Write to markdown file with incorrect results first
-    with open(os.path.join(output_dir, "results_test.md"), "w", encoding="utf-8") as f:
+    with open(os.path.join(output_dir, "test_result.md"), "w", encoding="utf-8") as f:
         # Write header
         f.write(f"# Agent Selection Results - Stella\n\n")
         f.write("## Benchmark Summary\n\n")
@@ -270,8 +270,8 @@ def main():
 
     # Initialize files
     for filename, header in [
-        ("results_test.md", "# Agent Selection Results - Stella\n\n"),
-        ("results_test.txt", "Agent Selection Results - Stella\n\n"),
+        ("test_result.md", "# Agent Selection Results - Stella\n\n"),
+        ("test_result.txt", "Agent Selection Results - Stella\n\n"),
     ]:
         with open(os.path.join(output_dir, filename), "w") as f:
             f.write(header)
@@ -357,27 +357,20 @@ def main():
 
     # Write metrics to files with detailed breakdown
     metrics_text = (
-        f"\nPerformance Metrics:\n"
-        f"\nTiming Breakdown:\n"
-        f"Setup/overhead time: {setup_time:.2f} seconds\n"
-        f"Loading agents: {step_times['load_agents']:.2f} seconds\n"
-        f"Initializing ChromaDB: {step_times['init_chroma']:.2f} seconds\n"
-        f"Adding descriptions: {step_times['add_descriptions']:.2f} seconds\n"
-        f"Query processing time: {total_query_time:.2f} seconds\n"
-        f"Average query time: {avg_query_time:.4f} seconds\n"
-        f"Total execution time: {total_time:.2f} seconds\n"
+        f"\nSetup/overhead time: {setup_time:.2f} seconds\n"
+        f"\nLoading agents: {step_times['load_agents']:.2f} seconds\n"
+        f"\nInitializing ChromaDB: {step_times['init_chroma']:.2f} seconds\n"
+        f"\nAdding descriptions: {step_times['add_descriptions']:.2f} seconds\n"
+        f"\nQuery processing time: {total_query_time:.2f} seconds\n"
+        f"\nAverage query time: {avg_query_time:.4f} seconds\n"
+        f"\nTotal execution time: {total_time:.2f} seconds\n"
     )
 
-    with open(os.path.join(output_dir, "results_test.txt"), "a") as f:
+    with open(os.path.join(output_dir, "test_result.txt"), "a") as f:
         f.write(metrics_text)
 
-    with open(os.path.join(output_dir, "results_test.md"), "a") as f:
-        f.write(
-            f"\n## Performance Metrics\n\n"
-            f"- **Total execution time**: {total_time:.2f} seconds\n"
-            f"- **Average query time**: {avg_query_time:.4f} seconds\n"
-            f"- **Total query processing time**: {total_query_time:.2f} seconds\n"
-        )
+    with open(os.path.join(output_dir, "test_result.md"), "a") as f:
+        f.write(metrics_text)
 
     write_benchmark_results(predictions, output_dir)
 
