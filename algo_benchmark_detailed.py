@@ -35,7 +35,6 @@ def write_results(
     agent_name: str,
     expected_agent: str,
     details: List[Dict],
-    output_dir: str,
     is_correct: bool,
 ):
     """Write detailed results for each query"""
@@ -223,12 +222,13 @@ def main():
 
         for query in benchmark.queries:
             result_id, result_agent, details = algorithm.select(query["query"])
+            is_correct = query["object_id"] == result_id  # Calculate is_correct first
             result_text, is_correct = write_results(
                 query["query"],
                 result_agent,
                 query["agent"],
                 details,
-                query["object_id"] == result_id,
+                is_correct
             )
 
             if is_correct:
