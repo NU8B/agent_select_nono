@@ -12,6 +12,7 @@ from rich.progress import (
     BarColumn,
     TimeElapsedColumn,
 )
+from rapidfuzz import fuzz
 
 # Add the project root to Python path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -21,11 +22,6 @@ from benchmark.selection import SelectionAlgorithm
 from benchmark.benchmark import Benchmark
 from universa.memory.chromadb.persistent_chromadb import ChromaDB
 from universa.utils.agent_compute_dict import agent_dict_cache
-
-
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-
 
 console = Console()
 
@@ -51,13 +47,21 @@ def write_results(
         result_text += f"**Agent**: {detail['agent_name']}\n"
         result_text += f"- **Combined Score**: {detail['combined_score']:.4f}\n"
         result_text += f"- **Distance**: {detail['distance']:.4f}\n"
+        result_text += f"- **Lexical Score**: {detail['lexical_score']:.4f}\n"
         result_text += f"- **Average Rating**: {detail['average_rating']:.2f}\n"
         result_text += f"- **Rated Responses**: {detail['rated_responses']}\n"
-        result_text += f"- **Distance Weight**: {1-detail['rating_weight']:.2f}\n"
-        result_text += f"- **Rating Weight**: {detail['rating_weight']:.2f}\n\n"
+        result_text += f"- **Distance Weight**: {1-detail['rating_weight']-0.15:.2f}\n"
+        result_text += f"- **Rating Weight**: {detail['rating_weight']:.2f}\n"
+        result_text += f"- **Lexical Weight**: 0.15\n\n"
 
     result_text += "\n---\n"
     return result_text, is_correct
+
+
+def compute_lexical_score(query: str, description: str) -> float:
+    """Compute normalized lexical similarity score"""
+    # Use token sort ratio to handle word order differences
+    return fuzz.token_sort_ratio(query.lower(), description.lower()) / 100.0
 
 
 class StellaDetailedAlgorithm(SelectionAlgorithm):
@@ -74,7 +78,6 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
         agent_dict_cache.initialize(agents)
 
         self.chroma = ChromaDB(collection_name="agent_descriptions_benchmark")
-        self.ids = ids
 
         # Initialize ChromaDB if empty
         if self.chroma.get_count() == 0:
@@ -87,14 +90,6 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
                 ids=ids,
             )
 
-        # Add TF-IDF vectorizer for lexical similarity
-        self.tfidf = TfidfVectorizer(stop_words="english")
-        agent_descriptions = [
-            agent["description"] + "\n\n" + agent["system_prompt"]
-            for agent in agents
-        ]
-        self.tfidf_matrix = self.tfidf.fit_transform(agent_descriptions)
-
         self.init_time = time.time() - start_time
 
     def select(self, query: str) -> Tuple[str, str, List[Dict]]:
@@ -104,10 +99,6 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
         result = self.chroma.query_data(query_text=[query])
         documents = result["documents"][0]
         distances = np.array(result["distances"][0])
-        matched_ids = result["ids"][0]  # Get the IDs from ChromaDB result
-
-        # Use the matched_ids instead of full documents
-        matched_indices = [self.ids.index(doc_id) for doc_id in matched_ids]
 
         # Use cached values from dict cache
         cache_values = agent_dict_cache.values
@@ -117,29 +108,27 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
         # Get pre-calculated values for matched agents
         agent_data = [agent_values[doc] for doc in documents]
 
-        # Get pre-calculated weights
+        # Get pre-calculated weights and normalized values
         response_weights = np.array([data["response_weight"] for data in agent_data])
-        distance_weights = np.array([data["distance_weight"] for data in agent_data])
+        semantic_weights = np.array([data["semantic_weight"] for data in agent_data])
         normalized_ratings = np.array(
             [data["normalized_rating"] for data in agent_data]
         )
+        lexical_weight = 0.20  # Changed to 20%
 
-        # Calculate lexical similarity using the already calculated matched_indices
-        query_vector = self.tfidf.transform([query])
-        lexical_similarities = cosine_similarity(
-            query_vector, 
-            self.tfidf_matrix[matched_indices]
-        ).flatten()
-        normalized_lexical = lexical_similarities / lexical_similarities.max()
-        
+        # Calculate lexical scores
+        lexical_scores = np.array(
+            [compute_lexical_score(query, doc) for doc in documents]
+        )
+
         # Normalize distances
         normalized_distances = distances / distances.max()
 
-        # Adjust final score calculation (example weights)
+        # Compute final scores with all three components
         combined_scores = (
-            (1 - normalized_distances**2) * distance_weights * 0.4 +  # semantic similarity
-            normalized_ratings * response_weights * 0.4 +             # rating weight
-            normalized_lexical * 0.2                                  # lexical similarity
+            (1 - normalized_distances**2) * semantic_weights
+            + normalized_ratings * response_weights
+            + lexical_scores * lexical_weight
         )
 
         # Create selection details
@@ -149,20 +138,19 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
                 "distance": float(dist),
                 "normalized_distance": float(norm_dist),
                 "average_rating": float(data["average_rating"]),
-                "normalized_rating": float(norm_rating),
-                "rating_weight": float(resp_weight),
+                "normalized_rating": float(data["normalized_rating"]),
+                "rating_weight": float(data["response_weight"]),
+                "semantic_weight": float(data["semantic_weight"]),
+                "lexical_score": float(lex_score),
                 "combined_score": float(score),
                 "rated_responses": data["rated_responses"],
-                "lexical_similarity": float(lex_sim),
             }
-            for data, dist, norm_dist, norm_rating, resp_weight, score, lex_sim in zip(
+            for data, dist, norm_dist, lex_score, score in zip(
                 agent_data,
                 distances,
                 normalized_distances,
-                normalized_ratings,
-                response_weights,
+                lexical_scores,
                 combined_scores,
-                lexical_similarities,
             )
         ]
 
@@ -222,7 +210,6 @@ def main():
 
         for query in benchmark.queries:
             result_id, result_agent, details = algorithm.select(query["query"])
-            is_correct = query["object_id"] == result_id  # Calculate is_correct first
             result_text, is_correct = write_results(
                 query["query"],
                 result_agent,
