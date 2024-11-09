@@ -12,6 +12,7 @@ from rich.progress import (
     BarColumn,
     TimeElapsedColumn,
 )
+from rapidfuzz import fuzz
 
 # Add the project root to Python path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -30,7 +31,6 @@ def write_results(
     agent_name: str,
     expected_agent: str,
     details: List[Dict],
-    output_dir: str,
     is_correct: bool,
 ):
     """Write detailed results for each query"""
@@ -47,13 +47,21 @@ def write_results(
         result_text += f"**Agent**: {detail['agent_name']}\n"
         result_text += f"- **Combined Score**: {detail['combined_score']:.4f}\n"
         result_text += f"- **Distance**: {detail['distance']:.4f}\n"
+        result_text += f"- **Lexical Score**: {detail['lexical_score']:.4f}\n"
         result_text += f"- **Average Rating**: {detail['average_rating']:.2f}\n"
         result_text += f"- **Rated Responses**: {detail['rated_responses']}\n"
-        result_text += f"- **Distance Weight**: {1-detail['rating_weight']:.2f}\n"
-        result_text += f"- **Rating Weight**: {detail['rating_weight']:.2f}\n\n"
+        result_text += f"- **Distance Weight**: {1-detail['rating_weight']-0.15:.2f}\n"
+        result_text += f"- **Rating Weight**: {detail['rating_weight']:.2f}\n"
+        result_text += f"- **Lexical Weight**: 0.15\n\n"
 
     result_text += "\n---\n"
     return result_text, is_correct
+
+
+def compute_lexical_score(query: str, description: str) -> float:
+    """Compute normalized lexical similarity score"""
+    # Use token sort ratio to handle word order differences
+    return fuzz.token_sort_ratio(query.lower(), description.lower()) / 100.0
 
 
 class StellaDetailedAlgorithm(SelectionAlgorithm):
@@ -100,20 +108,28 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
         # Get pre-calculated values for matched agents
         agent_data = [agent_values[doc] for doc in documents]
 
-        # Get pre-calculated weights
+        # Get pre-calculated weights and normalized values
         response_weights = np.array([data["response_weight"] for data in agent_data])
-        distance_weights = np.array([data["distance_weight"] for data in agent_data])
+        semantic_weights = np.array([data["semantic_weight"] for data in agent_data])
         normalized_ratings = np.array(
             [data["normalized_rating"] for data in agent_data]
+        )
+        lexical_weight = 0.20  # Changed to 20%
+
+        # Calculate lexical scores
+        lexical_scores = np.array(
+            [compute_lexical_score(query, doc) for doc in documents]
         )
 
         # Normalize distances
         normalized_distances = distances / distances.max()
 
-        # Compute final scores
+        # Compute final scores with all three components
         combined_scores = (
-            1 - normalized_distances**2
-        ) * distance_weights + normalized_ratings * response_weights
+            (1 - normalized_distances**2) * semantic_weights
+            + normalized_ratings * response_weights
+            + lexical_scores * lexical_weight
+        )
 
         # Create selection details
         selection_details = [
@@ -122,17 +138,18 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
                 "distance": float(dist),
                 "normalized_distance": float(norm_dist),
                 "average_rating": float(data["average_rating"]),
-                "normalized_rating": float(norm_rating),
-                "rating_weight": float(resp_weight),
+                "normalized_rating": float(data["normalized_rating"]),
+                "rating_weight": float(data["response_weight"]),
+                "semantic_weight": float(data["semantic_weight"]),
+                "lexical_score": float(lex_score),
                 "combined_score": float(score),
                 "rated_responses": data["rated_responses"],
             }
-            for data, dist, norm_dist, norm_rating, resp_weight, score in zip(
+            for data, dist, norm_dist, lex_score, score in zip(
                 agent_data,
                 distances,
                 normalized_distances,
-                normalized_ratings,
-                response_weights,
+                lexical_scores,
                 combined_scores,
             )
         ]
