@@ -228,7 +228,7 @@ def main():
                 result_agent,
                 query["agent"],
                 details,
-                is_correct
+                query["object_id"] == result_id,
             )
 
             if is_correct:
