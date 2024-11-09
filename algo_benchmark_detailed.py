@@ -228,7 +228,6 @@ def main():
                 result_agent,
                 query["agent"],
                 details,
-                output_dir,
                 query["object_id"] == result_id,
             )
 
