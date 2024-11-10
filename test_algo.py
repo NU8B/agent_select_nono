@@ -64,39 +64,27 @@ def select_best_agent(  #
     # Use cached values
     cache_values = agent_cache.values
     agent_lookup = cache_values["agent_lookup"]
-    max_responses = cache_values["max_responses"]
+    agent_values = cache_values["agent_values"]
+
+    # Get pre-calculated values for matched agents
+    agent_data = [agent_values[doc] for doc in documents]
     agents_list = [agent_lookup[doc] for doc in documents]
 
-    # Vectorized calculations
-    rated_responses = np.array([agent.rated_responses for agent in agents_list])
-    response_ratios = rated_responses / max_responses
-
-    # Calculate weights following the new pattern
-    response_weights = 0.2 + (0.1 * response_ratios)
-    semantic_weights = 0.7 - (0.1 * response_ratios)
-    lexical_weights = np.full_like(response_weights, 0.1)  # Fixed 10%
+    # Get pre-calculated weights and normalized values
+    response_weights = np.array([data["response_weight"] for data in agent_data])
+    semantic_weights = np.array([data["semantic_weight"] for data in agent_data])
+    lexical_weights = np.array([data["lexical_weight"] for data in agent_data])
+    normalized_ratings = np.array([data["normalized_rating"] for data in agent_data])
 
     # Calculate lexical scores
     lexical_scores = np.array(
         [compute_lexical_score(query, agent.description) for agent in agents_list]
     )
 
-    # Normalize distances in single operation
+    # Normalize distances
     normalized_distances = distances / distances.max()
 
-    # Compute ratings in single operation
-    normalized_ratings = np.array(
-        [
-            (
-                agent.average_rating / cache_values["max_rating"]
-                if cache_values["max_rating"] > 0
-                else 0
-            )
-            for agent in agents_list
-        ]
-    )
-
-    # Updated score calculation including lexical component
+    # Updated score calculation using pre-calculated weights
     combined_scores = (
         (1 - normalized_distances**2) * semantic_weights
         + normalized_ratings * response_weights
