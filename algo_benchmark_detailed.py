@@ -13,7 +13,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rapidfuzz import fuzz
-import spacy
+import hashlib
 
 # Add the project root to Python path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -32,13 +32,14 @@ def write_results(
     agent_name: str,
     expected_agent: str,
     details: List[Dict],
+    output_dir: str,
     is_correct: bool,
 ):
     """Write detailed results for each query"""
     # Store results to be written later in correct order
     result_text = f"\n## Query:{query}\n"
     result_text += f"**Benchmark**: [{'CORRECT' if is_correct else f'INCORRECT - Expected: {expected_agent}'}]**\n\n"
-    result_text += f"\n**Selected Agent**: {agent_name}\n"
+    result_text += f"**Selected Agent**: {agent_name}\n"
     result_text += "\n### Top 3 Agent Matches:\n\n"
 
     sorted_details = sorted(details, key=lambda x: x["combined_score"], reverse=True)[
@@ -51,9 +52,9 @@ def write_results(
         result_text += f"- **Lexical Score**: {detail['lexical_score']:.4f}\n"
         result_text += f"- **Average Rating**: {detail['average_rating']:.2f}\n"
         result_text += f"- **Rated Responses**: {detail['rated_responses']}\n"
-        result_text += f"- **Distance Weight**: {1-detail['rating_weight']-0.15:.2f}\n"
+        result_text += f"- **Distance Weight**: {detail['semantic_weight']:.2f}\n"
         result_text += f"- **Rating Weight**: {detail['rating_weight']:.2f}\n"
-        result_text += f"- **Lexical Weight**: 0.15\n\n"
+        result_text += f"- **Lexical Weight**: {detail['lexical_weight']:.2f}\n\n"
 
     result_text += "\n---\n"
     return result_text, is_correct
@@ -96,16 +97,24 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
         # Initialize agent cache with dictionary-based agents
         agent_dict_cache.initialize(agents)
 
-        self.chroma = ChromaDB(collection_name="agent_descriptions_benchmark")
+        # Create a unique collection name using a stable hash of the agent descriptions
+        descriptions = [
+            agent["description"] + "\n\n" + agent["system_prompt"] for agent in agents
+        ]
+        descriptions_str = "||".join(
+            sorted(descriptions)
+        )  # Join sorted descriptions with delimiter
+        collection_hash = hashlib.sha256(descriptions_str.encode()).hexdigest()[
+            :8
+        ]  # Use first 8 chars
+        self.chroma = ChromaDB(
+            collection_name=f"agent_descriptions_benchmark_detailed_{collection_hash}"
+        )
 
         # Initialize ChromaDB if empty
         if self.chroma.get_count() == 0:
-            agent_descriptions = [
-                agent["description"] + "\n\n" + agent["system_prompt"]
-                for agent in agents
-            ]
             self.chroma.add_data(
-                documents=agent_descriptions,
+                documents=descriptions,
                 ids=ids,
             )
 
@@ -130,6 +139,7 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
         # Get pre-calculated weights and normalized values
         response_weights = np.array([data["response_weight"] for data in agent_data])
         semantic_weights = np.array([data["semantic_weight"] for data in agent_data])
+        lexical_weights = np.array([data["lexical_weight"] for data in agent_data])
         normalized_ratings = np.array(
             [data["normalized_rating"] for data in agent_data]
         )
@@ -143,10 +153,9 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
 
         # Compute final scores with all components
         combined_scores = (
-            (1 - normalized_distances**2) * self.distance_weight
-            + normalized_ratings * self.rating_weight
-            + lexical_scores * self.lexical_weight
-            + semantic_scores * self.semantic_weight
+            (1 - normalized_distances**2) * semantic_weights
+            + normalized_ratings * response_weights
+            + lexical_scores * lexical_weights
         )
 
         # Create selection details
@@ -162,6 +171,7 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
                 "lexical_score": float(lex_score),
                 "combined_score": float(score),
                 "rated_responses": data["rated_responses"],
+                "lexical_weight": float(data["lexical_weight"]),
             }
             for data, dist, norm_dist, lex_score, sem_score, score in zip(
                 agent_data,

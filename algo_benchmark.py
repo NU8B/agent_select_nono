@@ -4,6 +4,8 @@ import time
 import numpy as np
 from typing import List, Dict, Tuple, Any
 import time
+from rapidfuzz import fuzz
+import hashlib
 
 # Add the project root to Python path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -13,6 +15,11 @@ from benchmark.selection import SelectionAlgorithm
 from benchmark.benchmark import Benchmark
 from universa.memory.chromadb.persistent_chromadb import ChromaDB
 from universa.utils.agent_compute_dict import agent_dict_cache
+
+
+def compute_lexical_score(query: str, description: str) -> float:
+    """Compute normalized lexical similarity score"""
+    return fuzz.token_sort_ratio(query.lower(), description.lower()) / 100.0
 
 
 class StellaAlgorithm(SelectionAlgorithm):
@@ -28,16 +35,24 @@ class StellaAlgorithm(SelectionAlgorithm):
         # Initialize agent cache with dictionary-based agents
         agent_dict_cache.initialize(agents)
 
-        self.chroma = ChromaDB(collection_name="agent_descriptions_benchmark")
+        # Create a unique collection name using a stable hash of the agent descriptions
+        descriptions = [
+            agent["description"] + "\n\n" + agent["system_prompt"] for agent in agents
+        ]
+        descriptions_str = "||".join(
+            sorted(descriptions)
+        )  # Join sorted descriptions with delimiter
+        collection_hash = hashlib.sha256(descriptions_str.encode()).hexdigest()[
+            :8
+        ]  # Use first 8 chars
+        self.chroma = ChromaDB(
+            collection_name=f"agent_descriptions_benchmark_{collection_hash}"
+        )
 
         # Initialize ChromaDB if empty
         if self.chroma.get_count() == 0:
-            agent_descriptions = [
-                agent["description"] + "\n\n" + agent["system_prompt"]
-                for agent in agents
-            ]
             self.chroma.add_data(
-                documents=agent_descriptions,
+                documents=descriptions,
                 ids=ids,
             )
 
@@ -59,20 +74,28 @@ class StellaAlgorithm(SelectionAlgorithm):
         # Get pre-calculated values for matched agents
         agent_data = [agent_values[doc] for doc in documents]
 
-        # Get pre-calculated weights
+        # Get pre-calculated weights and normalized values
         response_weights = np.array([data["response_weight"] for data in agent_data])
-        distance_weights = np.array([data["distance_weight"] for data in agent_data])
+        semantic_weights = np.array([data["semantic_weight"] for data in agent_data])
+        lexical_weights = np.array([data["lexical_weight"] for data in agent_data])
         normalized_ratings = np.array(
             [data["normalized_rating"] for data in agent_data]
+        )
+
+        # Calculate lexical scores
+        lexical_scores = np.array(
+            [compute_lexical_score(query, doc) for doc in documents]
         )
 
         # Normalize distances
         normalized_distances = distances / distances.max()
 
-        # Compute final scores
+        # Compute final scores with all three components
         combined_scores = (
-            1 - normalized_distances**2
-        ) * distance_weights + normalized_ratings * response_weights
+            (1 - normalized_distances**2) * semantic_weights
+            + normalized_ratings * response_weights
+            + lexical_scores * lexical_weights
+        )
 
         best_idx = np.argmax(combined_scores)
         best_doc = documents[best_idx]

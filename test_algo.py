@@ -2,7 +2,7 @@ import os
 import json
 import torch
 from universa.memory.chromadb.persistent_chromadb import ChromaDB
-from data.benchmark_data import (
+from data.test_data import (
     QUERY_AGENT_MAPPING,
     get_benchmark_metrics,
     get_detailed_results,
@@ -21,6 +21,8 @@ import torch.cuda.amp
 import functools
 import numpy as np
 from universa.utils.agent_compute import agent_cache
+from rapidfuzz import fuzz
+import hashlib
 
 # Timing dictionaries
 step_times = {}
@@ -67,8 +69,17 @@ def select_best_agent(  #
 
     # Vectorized calculations
     rated_responses = np.array([agent.rated_responses for agent in agents_list])
-    response_weights = 0.2 + (0.1 * (rated_responses / max_responses))
-    distance_weights = 1 - response_weights
+    response_ratios = rated_responses / max_responses
+
+    # Calculate weights following the new pattern
+    response_weights = 0.2 + (0.1 * response_ratios)
+    semantic_weights = 0.7 - (0.1 * response_ratios)
+    lexical_weights = np.full_like(response_weights, 0.1)  # Fixed 10%
+
+    # Calculate lexical scores
+    lexical_scores = np.array(
+        [compute_lexical_score(query, agent.description) for agent in agents_list]
+    )
 
     # Normalize distances in single operation
     normalized_distances = distances / distances.max()
@@ -85,9 +96,12 @@ def select_best_agent(  #
         ]
     )
 
+    # Updated score calculation including lexical component
     combined_scores = (
-        1 - normalized_distances**2
-    ) * distance_weights + normalized_ratings * response_weights
+        (1 - normalized_distances**2) * semantic_weights
+        + normalized_ratings * response_weights
+        + lexical_scores * lexical_weights
+    )
 
     best_idx = np.argmax(combined_scores)
     best_agent = agents_list[best_idx]
@@ -99,16 +113,22 @@ def select_best_agent(  #
             "normalized_distance": float(norm_dist),
             "average_rating": float(agent.average_rating),
             "normalized_rating": float(norm_rating),
-            "rating_weight": float(weight),
+            "rating_weight": float(r_weight),
+            "semantic_weight": float(s_weight),
+            "lexical_weight": float(l_weight),
+            "lexical_score": float(lex_score),
             "combined_score": float(score),
             "rated_responses": agent.rated_responses,
         }
-        for agent, dist, norm_dist, norm_rating, weight, score in zip(
+        for agent, dist, norm_dist, norm_rating, r_weight, s_weight, l_weight, lex_score, score in zip(
             agents_list,
             distances,
             normalized_distances,
             normalized_ratings,
             response_weights,
+            semantic_weights,
+            lexical_weights,
+            lexical_scores,
             combined_scores,
         )
     ]
@@ -118,92 +138,85 @@ def select_best_agent(  #
     )
 
 
-def write_results(
-    query: str,
-    best_agent: object,
-    selection_details: List[Dict],
-    output_dir: str,
-) -> None:
-    """Write results to files with consistent formatting"""
-    # Write to text file
-    with open(os.path.join(output_dir, "test_result.txt"), "a") as txt_file:
-        txt_file.write(f"Query: {query}\nSelected Agent: {best_agent.name}\n\n")
+def compute_lexical_score(query: str, description: str) -> float:
+    """Compute normalized lexical similarity score"""
+    return fuzz.token_sort_ratio(query.lower(), description.lower()) / 100.0
 
-    # Write to markdown file
-    with open(os.path.join(output_dir, "test_result.md"), "a") as md_file:
-        md_file.write(f"## Query: {query}\n\n")
-        md_file.write(f"**Selected Agent**: {best_agent.name}\n\n")
-        md_file.write("### Top 3 Agent Matches:\n\n")
 
-        for detail in selection_details[:3]:  # Only show top 3 matches
-            md_file.write(
-                f"**Agent**: {detail['agent_name']}\n"
-                f"- **Combined Score**: {detail['combined_score']:.4f}\n"
-                f"- **Distance**: {detail['distance']:.4f}\n"
-                f"- **Average Rating**: {detail['average_rating']:.2f}\n"
-                f"- **Rated Responses**: {detail['rated_responses']}\n"
-                f"- **Distance Weight**: {1 - detail['rating_weight']:.2f}\n"
-                f"- **Rating Weight**: {detail['rating_weight']:.2f}\n\n"
-            )
-        md_file.write("\n---\n\n")
+def write_results(query: str, selected_agent: object, details: List[Dict]) -> str:
+    """Write detailed results for each query"""
+    result_text = f"**Selected Agent**: {selected_agent.name}\n"
+    result_text += "\n### Top 3 Agent Matches:\n\n"
+
+    sorted_details = sorted(details, key=lambda x: x["combined_score"], reverse=True)[
+        :3
+    ]
+    for detail in sorted_details:
+        result_text += f"**Agent**: {detail['agent_name']}\n"
+        result_text += f"- **Combined Score**: {detail['combined_score']:.4f}\n"
+        result_text += f"- **Distance**: {detail['distance']:.4f}\n"
+        result_text += f"- **Lexical Score**: {detail['lexical_score']:.4f}\n"
+        result_text += f"- **Average Rating**: {detail['average_rating']:.2f}\n"
+        result_text += f"- **Rated Responses**: {detail['rated_responses']}\n"
+        result_text += f"- **Distance Weight**: {detail['semantic_weight']:.2f}\n"
+        result_text += f"- **Rating Weight**: {detail['rating_weight']:.2f}\n"
+        result_text += f"- **Lexical Weight**: {detail['lexical_weight']:.2f}\n\n"
+
+    result_text += "\n---\n"
+    return result_text
 
 
 def write_benchmark_results(predictions: dict, output_dir: str) -> None:
     """Write benchmark results to output files with incorrect predictions highlighted at the top"""
-    metrics = get_benchmark_metrics(predictions)
-    detailed_results = get_detailed_results(predictions)
+    metrics = get_benchmark_metrics(
+        {k: v["predicted_agent"] for k, v in predictions.items()}
+    )
+    detailed_results = get_detailed_results(
+        {k: v["predicted_agent"] for k, v in predictions.items()}
+    )
 
-    # Sort results to put incorrect predictions first
-    incorrect_results = []
-    correct_results = []
-
-    with open(os.path.join(output_dir, "test_result.md"), "r", encoding="utf-8") as f:
-        content = f.read()
-        sections = content.split("## Query:")
-        header = sections[0]  # Save the header section
-
-        for section in sections[1:]:  # Skip header section
-            query = section.split("\n")[0].strip()
-            result = next((r for r in detailed_results if r["query"] == query), None)
-
-            if result:
-                if not result["is_correct"]:
-                    incorrect_results.append((query, section, result))
-                else:
-                    correct_results.append((query, section, result))
-
-    # Write to markdown file with incorrect results first
     with open(os.path.join(output_dir, "test_result.md"), "w", encoding="utf-8") as f:
-        # Write header
-        f.write(f"# Agent Selection Results - Stella\n\n")
+        # Write header and summary
+        f.write(f"# Agent Selection Results - Test\n\n")
         f.write("## Benchmark Summary\n\n")
         f.write(f"**Accuracy**: {metrics['accuracy']:.2%}\n")
         f.write(
             f"**Correct Predictions**: {metrics['correct_predictions']}/{metrics['total_queries']}\n\n"
         )
 
+        # Sort results to put incorrect predictions first
+        incorrect_results = []
+        correct_results = []
+
+        for result in detailed_results:
+            query = result["query"]
+            result["details"] = predictions[query]["details"]
+            if not result["is_correct"]:
+                incorrect_results.append(result)
+            else:
+                correct_results.append(result)
+
         # Write incorrect predictions section
         if incorrect_results:
             f.write("## ❌ Incorrect Predictions\n\n")
-            for query, section, result in incorrect_results:
-                f.write("## Query:" + query + "\n")
+            for result in incorrect_results:
+                query = result["query"]
+                f.write(f"## Query:{query}\n")
                 f.write(
                     f"**Benchmark**: [INCORRECT - Expected: {result['correct_agent']}]**\n\n"
                 )
-                remaining_content = "\n".join(section.split("\n")[1:])
-                f.write(remaining_content)
-            f.write("\n---\n\n")
+                f.write(result["details"])
+                f.write("\n---\n\n")
 
         # Write correct predictions section
         if correct_results:
             f.write("## ✅ Correct Predictions\n\n")
-            for query, section, result in correct_results:
-                f.write("## Query:" + query + "\n")
-                f.write("**Benchmark**: [CORRECT]**\n\n")
-                remaining_content = "\n".join(section.split("\n")[1:])
-                f.write(remaining_content)
-
-        f.write("\n---\n\n")
+            for result in correct_results:
+                query = result["query"]
+                f.write(f"## Query:{query}\n")
+                f.write(f"**Benchmark**: [CORRECT]**\n\n")
+                f.write(result["details"])
+                f.write("\n---\n\n")
 
 
 def format_memory(bytes_value: float) -> str:
@@ -213,7 +226,17 @@ def format_memory(bytes_value: float) -> str:
 
 def initialize_chromadb():
     """Initialize ChromaDB with fixed Stella model"""
-    chroma = ChromaDB(collection_name="agent_descriptions")
+    # Load agents to create unique collection name
+    agents = load_agents()
+    descriptions = [agent.description for agent in agents]
+    descriptions_str = "||".join(
+        sorted(descriptions)
+    )  # Join sorted descriptions with delimiter
+    collection_hash = hashlib.sha256(descriptions_str.encode()).hexdigest()[
+        :8
+    ]  # Use first 8 chars
+
+    chroma = ChromaDB(collection_name=f"agent_descriptions_test_{collection_hash}")
 
     # Get embedding dimension from a test query
     test_embedding = chroma.embedding_function.create_embeddings(["test"])[0]
@@ -228,6 +251,7 @@ def initialize_chromadb():
 def main():
     """Main execution function"""
     total_start = time.time()
+    total_query_time = 0  # Add this line to track total query time
 
     console = Console()
 
@@ -268,13 +292,8 @@ def main():
     output_dir = "output/test"
     os.makedirs(output_dir, exist_ok=True)
 
-    # Initialize files
-    for filename, header in [
-        ("test_result.md", "# Agent Selection Results - Stella\n\n"),
-        ("test_result.txt", "Agent Selection Results - Stella\n\n"),
-    ]:
-        with open(os.path.join(output_dir, filename), "w") as f:
-            f.write(header)
+    with open(os.path.join(output_dir, "test_result.md"), "w") as f:
+        f.write("# Agent Selection Results - Test\n\n")
 
     # Pre-warm model
     if torch.cuda.is_available():
@@ -283,7 +302,7 @@ def main():
 
     # Process queries
     predictions = {}
-    total_query_time = 0
+    results_details = {}  # Store details for each query
 
     with Progress(
         SpinnerColumn(),
@@ -297,29 +316,23 @@ def main():
             "[cyan]Processing queries...", total=len(QUERY_AGENT_MAPPING)
         )
 
-        # Process in batches
-        batch_size = 5
-        queries = list(QUERY_AGENT_MAPPING.keys())
+        for query in QUERY_AGENT_MAPPING:
+            query_start = time.time()
+            best_agent, selection_details = select_best_agent(
+                agents, query, chroma, max_rating
+            )
+            total_query_time += time.time() - query_start
 
-        for i in range(0, len(queries), batch_size):
-            batch_queries = queries[i : i + batch_size]
+            # Store both prediction and details
+            predictions[query] = {
+                "predicted_agent": best_agent.name,
+                "details": write_results(query, best_agent, selection_details),
+            }
 
-            for query in batch_queries:
-                query_start = time.time()
-                best_agent, selection_details = select_best_agent(
-                    agents, query, chroma, max_rating
-                )
-                query_time = time.time() - query_start
+            progress.advance(task)
 
-                query_times[query] = query_time
-                total_query_time += query_time
-
-                predictions[query] = best_agent.name
-                write_results(query, best_agent, selection_details, output_dir)
-                progress.advance(task)
-
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+    # Write the complete results file with all details
+    write_benchmark_results(predictions, output_dir)
 
     # Calculate final metrics
     total_time = time.time() - total_start
@@ -327,7 +340,9 @@ def main():
     avg_query_time = total_query_time / len(QUERY_AGENT_MAPPING)
 
     # Calculate benchmark metrics
-    metrics = get_benchmark_metrics(predictions)
+    metrics = get_benchmark_metrics(
+        {k: v["predicted_agent"] for k, v in predictions.items()}
+    )  # Extract just the predicted agent names
 
     # Print results
     console.print(f"📂 Results saved to: [cyan]{output_dir}[/cyan]")
@@ -357,22 +372,24 @@ def main():
 
     # Write metrics to files with detailed breakdown
     metrics_text = (
-        f"\nSetup/overhead time: {setup_time:.2f} seconds\n"
-        f"\nLoading agents: {step_times['load_agents']:.2f} seconds\n"
-        f"\nInitializing ChromaDB: {step_times['init_chroma']:.2f} seconds\n"
-        f"\nAdding descriptions: {step_times['add_descriptions']:.2f} seconds\n"
-        f"\nQuery processing time: {total_query_time:.2f} seconds\n"
-        f"\nAverage query time: {avg_query_time:.4f} seconds\n"
-        f"\nTotal execution time: {total_time:.2f} seconds\n"
+        f"\nPerformance Metrics:\n"
+        f"\nTiming Breakdown:\n"
+        f"Setup/overhead time: {setup_time:.2f} seconds\n"
+        f"Loading agents: {step_times['load_agents']:.2f} seconds\n"
+        f"Initializing ChromaDB: {step_times['init_chroma']:.2f} seconds\n"
+        f"Adding descriptions: {step_times['add_descriptions']:.2f} seconds\n"
+        f"Query processing time: {total_query_time:.2f} seconds\n"
+        f"Average query time: {avg_query_time:.4f} seconds\n"
+        f"Total execution time: {total_time:.2f} seconds\n"
     )
 
-    with open(os.path.join(output_dir, "test_result.txt"), "a") as f:
-        f.write(metrics_text)
-
     with open(os.path.join(output_dir, "test_result.md"), "a") as f:
-        f.write(metrics_text)
-
-    write_benchmark_results(predictions, output_dir)
+        f.write(
+            f"\n## Performance Metrics\n\n"
+            f"- **Total execution time**: {total_time:.2f} seconds\n"
+            f"- **Average query time**: {avg_query_time:.4f} seconds\n"
+            f"- **Total query processing time**: {total_query_time:.2f} seconds\n"
+        )
 
 
 if __name__ == "__main__":

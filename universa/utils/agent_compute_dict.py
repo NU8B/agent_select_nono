@@ -25,15 +25,18 @@ class AgentComputeDictCache:
             for agent in agents:
                 doc_key = agent["description"] + "\n\n" + agent["system_prompt"]
 
-                # Calculate rating weight (20-30% based on responses)
-                rating_weight = 0.2 + (
-                    0.1 * (agent["rated_responses"] / self.max_responses)
-                )
+                # Calculate response ratio (0-1)
+                response_ratio = agent["rated_responses"] / self.max_responses
 
-                # Calculate semantic weight (50-60% based on inverse of rating weight)
-                semantic_weight = 0.60 - (
-                    rating_weight - 0.25
-                )  # Adjusts to maintain total with 20% lexical
+                # Calculate rating weight (20-30% based on responses)
+                rating_weight = 0.2 + (0.1 * response_ratio)
+
+                # Calculate semantic weight (60-70% inversely based on responses)
+                # When rating_weight is highest (30%), semantic_weight will be lowest (60%)
+                semantic_weight = 0.7 - (0.1 * response_ratio)
+
+                # Lexical weight fixed at 10%
+                lexical_weight = 0.1
 
                 self.agent_values[doc_key] = {
                     "normalized_rating": (
@@ -42,7 +45,8 @@ class AgentComputeDictCache:
                         else 0
                     ),
                     "response_weight": rating_weight,
-                    "semantic_weight": semantic_weight,  # New field
+                    "semantic_weight": semantic_weight,
+                    "lexical_weight": lexical_weight,
                     "rated_responses": agent["rated_responses"],
                     "average_rating": agent["average_rating"],
                     "name": agent["name"],
