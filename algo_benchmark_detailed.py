@@ -13,6 +13,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rapidfuzz import fuzz
+import spacy
 
 # Add the project root to Python path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -66,9 +67,27 @@ def compute_lexical_score(query: str, description: str) -> float:
 
 class StellaDetailedAlgorithm(SelectionAlgorithm):
     def __init__(self, agents: List[Dict[str, Any]], ids: List[str]) -> None:
+        self.nlp = spacy.load('en_core_web_md')  # Load medium-sized English model
         self.total_time = 0
         self.query_count = 0
+        # Define weights as class attributes
+        self.lexical_weight = 0.15
+        self.semantic_weight = 0.40
+        self.distance_weight = 0.30
+        self.rating_weight = 0.15
         super().__init__(agents, ids)
+
+    def compute_semantic_similarity(self, query: str, description: str) -> float:
+        """Compute semantic similarity using spaCy word vectors"""
+        # Process texts
+        query_doc = self.nlp(query.lower())
+        desc_doc = self.nlp(description.lower())
+        
+        # Get document vectors
+        if query_doc.vector_norm and desc_doc.vector_norm:
+            similarity = query_doc.similarity(desc_doc)
+            return float(similarity)
+        return 0.0
 
     def initialize(self, agents: List[Dict[str, Any]], ids: List[str]) -> None:
         """Initialize the algorithm with provided agents and IDs"""
@@ -114,21 +133,20 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
         normalized_ratings = np.array(
             [data["normalized_rating"] for data in agent_data]
         )
-        lexical_weight = 0.20  # Changed to 20%
 
-        # Calculate lexical scores
-        lexical_scores = np.array(
-            [compute_lexical_score(query, doc) for doc in documents]
-        )
+        # Calculate both lexical and semantic scores
+        lexical_scores = np.array([compute_lexical_score(query, doc) for doc in documents])
+        semantic_scores = np.array([self.compute_semantic_similarity(query, doc) for doc in documents])
 
         # Normalize distances
         normalized_distances = distances / distances.max()
 
-        # Compute final scores with all three components
+        # Compute final scores with all components
         combined_scores = (
-            (1 - normalized_distances**2) * semantic_weights
-            + normalized_ratings * response_weights
-            + lexical_scores * lexical_weight
+            (1 - normalized_distances**2) * self.distance_weight
+            + normalized_ratings * self.rating_weight
+            + lexical_scores * self.lexical_weight
+            + semantic_scores * self.semantic_weight
         )
 
         # Create selection details
@@ -140,16 +158,17 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
                 "average_rating": float(data["average_rating"]),
                 "normalized_rating": float(data["normalized_rating"]),
                 "rating_weight": float(data["response_weight"]),
-                "semantic_weight": float(data["semantic_weight"]),
+                "semantic_score": float(sem_score),
                 "lexical_score": float(lex_score),
                 "combined_score": float(score),
                 "rated_responses": data["rated_responses"],
             }
-            for data, dist, norm_dist, lex_score, score in zip(
+            for data, dist, norm_dist, lex_score, sem_score, score in zip(
                 agent_data,
                 distances,
                 normalized_distances,
                 lexical_scores,
+                semantic_scores,
                 combined_scores,
             )
         ]
@@ -230,6 +249,14 @@ def main():
     accuracy = correct_predictions / total_queries
     total_time = time.time() - total_start_time
     stats = algorithm.get_stats()
+
+    # Print scoring summary
+    console.print(f"\nScores: {correct_predictions} out of {total_queries} ({accuracy:.1%})")
+    console.print("\nWeights applied:")
+    console.print(f"lexical  : {algorithm.lexical_weight:.2%}")
+    console.print(f"semantic : {algorithm.semantic_weight:.2%}")
+    console.print(f"distance : {algorithm.distance_weight:.2%}")
+    console.print(f"rating   : {algorithm.rating_weight:.2%}")
 
     # Write results in correct order
     with open(
