@@ -14,6 +14,7 @@ from rich.progress import (
 )
 from rapidfuzz import fuzz
 import hashlib
+import spacy
 
 # Add the project root to Python path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -52,9 +53,9 @@ def write_results(
         result_text += f"- **Lexical Score**: {detail['lexical_score']:.4f}\n"
         result_text += f"- **Average Rating**: {detail['average_rating']:.2f}\n"
         result_text += f"- **Rated Responses**: {detail['rated_responses']}\n"
-        result_text += f"- **Distance Weight**: {detail['semantic_weight']:.2f}\n"
-        result_text += f"- **Rating Weight**: {detail['rating_weight']:.2f}\n"
-        result_text += f"- **Lexical Weight**: {detail['lexical_weight']:.2f}\n\n"
+        result_text += f"- **Semantic Weight**: {detail['weights']['semantic']:.2f}\n"
+        result_text += f"- **Rating Weight**: {detail['weights']['rating']:.2f}\n"
+        result_text += f"- **Lexical Weight**: {detail['weights']['lexical']:.2f}\n\n"
 
     result_text += "\n---\n"
     return result_text, is_correct
@@ -166,19 +167,20 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
                 "normalized_distance": float(norm_dist),
                 "average_rating": float(data["average_rating"]),
                 "normalized_rating": float(data["normalized_rating"]),
-                "rating_weight": float(data["response_weight"]),
-                "semantic_score": float(sem_score),
                 "lexical_score": float(lex_score),
                 "combined_score": float(score),
                 "rated_responses": data["rated_responses"],
-                "lexical_weight": float(data["lexical_weight"]),
+                "weights": {
+                    "semantic": float(data["semantic_weight"]),
+                    "rating": float(data["response_weight"]),
+                    "lexical": float(data["lexical_weight"])
+                }
             }
-            for data, dist, norm_dist, lex_score, sem_score, score in zip(
+            for data, dist, norm_dist, lex_score, score in zip(
                 agent_data,
                 distances,
                 normalized_distances,
                 lexical_scores,
-                semantic_scores,
                 combined_scores,
             )
         ]
@@ -240,11 +242,12 @@ def main():
         for query in benchmark.queries:
             result_id, result_agent, details = algorithm.select(query["query"])
             result_text, is_correct = write_results(
-                query["query"],
-                result_agent,
-                query["agent"],
-                details,
-                query["object_id"] == result_id,
+                query=query["query"],
+                agent_name=result_agent,
+                expected_agent=query["agent"],
+                details=details,
+                output_dir=output_dir,
+                is_correct=(query["object_id"] == result_id),
             )
 
             if is_correct:
