@@ -71,10 +71,10 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
         self.total_time = 0
         self.query_count = 0
         # Define weights as class attributes
-        self.lexical_weight = 0.15
-        self.semantic_weight = 0.40
-        self.distance_weight = 0.30
-        self.rating_weight = 0.15
+        self.lexical_weight = 0.30
+        self.semantic_weight = 0.20
+        self.distance_weight = 0.40
+        self.rating_weight = 0.10
         super().__init__(agents, ids)
 
     def compute_semantic_similarity(self, query: str, description: str) -> float:
