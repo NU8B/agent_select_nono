@@ -22,6 +22,7 @@ import functools
 import numpy as np
 from universa.utils.agent_compute import agent_cache
 from rapidfuzz import fuzz
+import hashlib
 
 # Timing dictionaries
 step_times = {}
@@ -225,7 +226,17 @@ def format_memory(bytes_value: float) -> str:
 
 def initialize_chromadb():
     """Initialize ChromaDB with fixed Stella model"""
-    chroma = ChromaDB(collection_name="agent_descriptions")
+    # Load agents to create unique collection name
+    agents = load_agents()
+    descriptions = [agent.description for agent in agents]
+    descriptions_str = "||".join(
+        sorted(descriptions)
+    )  # Join sorted descriptions with delimiter
+    collection_hash = hashlib.sha256(descriptions_str.encode()).hexdigest()[
+        :8
+    ]  # Use first 8 chars
+
+    chroma = ChromaDB(collection_name=f"agent_descriptions_test_{collection_hash}")
 
     # Get embedding dimension from a test query
     test_embedding = chroma.embedding_function.create_embeddings(["test"])[0]

@@ -5,6 +5,7 @@ import numpy as np
 from typing import List, Dict, Tuple, Any
 import time
 from rapidfuzz import fuzz
+import hashlib
 
 # Add the project root to Python path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -34,16 +35,24 @@ class StellaAlgorithm(SelectionAlgorithm):
         # Initialize agent cache with dictionary-based agents
         agent_dict_cache.initialize(agents)
 
-        self.chroma = ChromaDB(collection_name="agent_descriptions_benchmark")
+        # Create a unique collection name using a stable hash of the agent descriptions
+        descriptions = [
+            agent["description"] + "\n\n" + agent["system_prompt"] for agent in agents
+        ]
+        descriptions_str = "||".join(
+            sorted(descriptions)
+        )  # Join sorted descriptions with delimiter
+        collection_hash = hashlib.sha256(descriptions_str.encode()).hexdigest()[
+            :8
+        ]  # Use first 8 chars
+        self.chroma = ChromaDB(
+            collection_name=f"agent_descriptions_benchmark_{collection_hash}"
+        )
 
         # Initialize ChromaDB if empty
         if self.chroma.get_count() == 0:
-            agent_descriptions = [
-                agent["description"] + "\n\n" + agent["system_prompt"]
-                for agent in agents
-            ]
             self.chroma.add_data(
-                documents=agent_descriptions,
+                documents=descriptions,
                 ids=ids,
             )
 

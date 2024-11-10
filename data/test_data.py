@@ -1,9 +1,6 @@
 # Dictionary mapping queries to their ideal agents
 
 QUERY_AGENT_MAPPING = {
-    # Queries for Python Engineer
-    "Create a basic Flask application with pandas for data analysis and simple matplotlib visualizations of CSV files": "Python Engineer",
-    "Help me write a Python script to automate log file processing and generate basic test reports": "Python Engineer",
     "Suggest a 2-week Italian food tour itinerary.": "Travel Planning Agent",
     "How do I implement a persistent shopping cart in a MERN stack e-commerce site?": "Expert MERN Developer",
     "Design a microservices architecture for a social media platform using Java and Spring Boot.": "Senior Backend Engineer",
@@ -27,6 +24,7 @@ QUERY_AGENT_MAPPING = {
     "Create a multiplayer mobile game using Unity with real-time synchronization, matchmaking, and leader boards.": "Game Developer",
     "Design a comprehensive design system for a financial dashboard application.": "UI/UX Designer",
     "Develop a DeFi lending platform using Solidity and Web3.js.": "Blockchain Developer",
+    "Build a Flask application that scrapes academic papers using BeautifulSoup, processes citations with regex, and provides a REST API with SQLAlchemy for citation network analysis": "Python Developer",
     "Create an adaptive learning platform that personalizes content based on student performance.": "Education Specialist",
     "Explain the basics of blockchain technology and its potential applications beyond cryptocurrency.": "Blockchain Developer",
     "Compare and contrast supervised, unsupervised, and reinforcement learning in AI.": "AI Expert",
@@ -35,12 +33,14 @@ QUERY_AGENT_MAPPING = {
     "Guide me through creating a responsive web application using Vue.js and Tailwind CSS.": "Expert MERN Developer",
     "What are the latest advancements in fusion energy research?": "Quantum Physicist",
     "Outline a training plan for a beginner aiming to run their first marathon in 6 months.": "Fitness Trainer",
+    "Create a basic Flask application with pandas for data analysis and simple matplotlib visualizations of CSV files": "Python Engineer",
     "How can machine learning be applied to improve renewable energy forecasting and grid management?": "AI Expert",
     "Create a personalized meal plan for someone with celiac disease and dairy intolerance.": "Nutrition Consultant",
     "Design a sustainable tiny house.": "Interior Designer",
     "Guide me through setting up a home automation system using Raspberry Pi and open-source software.": "Embedded Systems Engineer",
     "Design a comprehensive 12-week training program for a marathon.": "Fitness Trainer",
     "Develop a stress management program for corporate professionals.": "Psychology Counselor",
+    "Help me write a Python script to automate log file processing and generate basic test reports": "Python Engineer",
     "Create a career transition plan for a software developer moving into AI/ML.": "Career Counselor",
     "Plan a 3-week photography-focused trip through Southeast Asia.": "Travel Planning Agent",
     "Help me come up with an open-concept living space that maximizes natural light and flow.": "Interior Designer",
@@ -69,7 +69,6 @@ QUERY_AGENT_MAPPING = {
     "Create a series of posts and social media content documenting a culinary tour through Southeast Asia": "Traveling Blogger",
     "Design an end-to-end test automation framework for a microservices-based e-commerce platform using Selenium and TestNG": "QA Automation Engineer",
     "Create a performance testing strategy for a high-traffic mobile application using JMeter and Gatling": "QA Automation Engineer",
-    "Build a Flask application that scrapes academic papers using BeautifulSoup, processes citations with regex, and provides a REST API with SQLAlchemy for citation network analysis": "Python Developer",
     "Create a Django-based laboratory management system with Pandas for equipment tracking, pytest fixtures for test data generation, and Celery for automated maintenance scheduling": "Python Developer",
 }
 
