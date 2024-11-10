@@ -3,7 +3,6 @@ import sys
 import time
 import numpy as np
 from typing import List, Dict, Tuple, Any
-import time
 from rich.console import Console
 from rich.progress import (
     Progress,
@@ -12,7 +11,7 @@ from rich.progress import (
     BarColumn,
     TimeElapsedColumn,
 )
-from rapidfuzz import fuzz
+from rapidfuzz import fuzz  # Import RapidFuzz
 
 # Add the project root to Python path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -25,44 +24,9 @@ from universa.utils.agent_compute_dict import agent_dict_cache
 
 console = Console()
 
-
-def write_results(
-    query: str,
-    agent_name: str,
-    expected_agent: str,
-    details: List[Dict],
-    is_correct: bool,
-):
-    """Write detailed results for each query"""
-    # Store results to be written later in correct order
-    result_text = f"\n## Query:{query}\n"
-    result_text += f"**Benchmark**: [{'CORRECT' if is_correct else f'INCORRECT - Expected: {expected_agent}'}]**\n\n"
-    result_text += f"\n**Selected Agent**: {agent_name}\n"
-    result_text += "\n### Top 3 Agent Matches:\n\n"
-
-    sorted_details = sorted(details, key=lambda x: x["combined_score"], reverse=True)[
-        :3
-    ]
-    for detail in sorted_details:
-        result_text += f"**Agent**: {detail['agent_name']}\n"
-        result_text += f"- **Combined Score**: {detail['combined_score']:.4f}\n"
-        result_text += f"- **Distance**: {detail['distance']:.4f}\n"
-        result_text += f"- **Lexical Score**: {detail['lexical_score']:.4f}\n"
-        result_text += f"- **Average Rating**: {detail['average_rating']:.2f}\n"
-        result_text += f"- **Rated Responses**: {detail['rated_responses']}\n"
-        result_text += f"- **Distance Weight**: {1-detail['rating_weight']-0.15:.2f}\n"
-        result_text += f"- **Rating Weight**: {detail['rating_weight']:.2f}\n"
-        result_text += f"- **Lexical Weight**: 0.15\n\n"
-
-    result_text += "\n---\n"
-    return result_text, is_correct
-
-
 def compute_lexical_score(query: str, description: str) -> float:
-    """Compute normalized lexical similarity score"""
-    # Use token sort ratio to handle word order differences
-    return fuzz.token_sort_ratio(query.lower(), description.lower()) / 100.0
-
+    """Compute lexical similarity using RapidFuzz"""
+    return fuzz.ratio(query, description) / 100.0  # Normalize to 0-1 range
 
 class StellaDetailedAlgorithm(SelectionAlgorithm):
     def __init__(self, agents: List[Dict[str, Any]], ids: List[str]) -> None:
@@ -102,37 +66,54 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
 
         # Use cached values from dict cache
         cache_values = agent_dict_cache.values
-        agent_lookup = cache_values["agent_lookup"]
         agent_values = cache_values["agent_values"]
 
         # Get pre-calculated values for matched agents
         agent_data = [agent_values[doc] for doc in documents]
 
-        # Get pre-calculated weights and normalized values
+        # Calculate scores
+        response_weights, semantic_weights, normalized_ratings = self._get_weights(agent_data)
+        lexical_scores = self._calculate_lexical_scores(query, documents)
+        combined_scores = self._compute_combined_scores(distances, semantic_weights, normalized_ratings, lexical_scores, response_weights)
+
+        # Create selection details
+        selection_details = self._create_selection_details(agent_data, distances, combined_scores, lexical_scores)
+
+        best_idx = np.argmax(combined_scores)
+        best_doc = documents[best_idx]
+        best_agent_data = agent_values[best_doc]
+        best_id = best_agent_data["object_id"]
+
+        query_time = time.time() - start_time
+        self.total_time += query_time
+        self.query_count += 1
+
+        return best_id, best_agent_data["name"], selection_details
+
+    def _get_weights(self, agent_data: List[Dict]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Get pre-calculated weights and normalized values"""
         response_weights = np.array([data["response_weight"] for data in agent_data])
         semantic_weights = np.array([data["semantic_weight"] for data in agent_data])
-        normalized_ratings = np.array(
-            [data["normalized_rating"] for data in agent_data]
-        )
-        lexical_weight = 0.20  # Changed to 20%
+        normalized_ratings = np.array([data["normalized_rating"] for data in agent_data])
+        return response_weights, semantic_weights, normalized_ratings
 
-        # Calculate lexical scores
-        lexical_scores = np.array(
-            [compute_lexical_score(query, doc) for doc in documents]
-        )
+    def _calculate_lexical_scores(self, query: str, documents: List[str]) -> np.ndarray:
+        """Calculate lexical scores for each document"""
+        return np.array([compute_lexical_score(query, doc) for doc in documents])
 
-        # Normalize distances
+    def _compute_combined_scores(self, distances: np.ndarray, semantic_weights: np.ndarray, normalized_ratings: np.ndarray, lexical_scores: np.ndarray, response_weights: np.ndarray) -> np.ndarray:
+        """Compute final scores with all three components"""
+        lexical_weight = 0.45
         normalized_distances = distances / distances.max()
-
-        # Compute final scores with all three components
-        combined_scores = (
+        return (
             (1 - normalized_distances**2) * semantic_weights
             + normalized_ratings * response_weights
             + lexical_scores * lexical_weight
         )
 
-        # Create selection details
-        selection_details = [
+    def _create_selection_details(self, agent_data: List[Dict], distances: np.ndarray, combined_scores: np.ndarray, lexical_scores: np.ndarray) -> List[Dict]:
+        """Create detailed selection information for each agent"""
+        return [
             {
                 "agent_name": data["name"],
                 "distance": float(dist),
@@ -148,22 +129,11 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
             for data, dist, norm_dist, lex_score, score in zip(
                 agent_data,
                 distances,
-                normalized_distances,
+                distances / distances.max(),
                 lexical_scores,
                 combined_scores,
             )
         ]
-
-        best_idx = np.argmax(combined_scores)
-        best_doc = documents[best_idx]
-        best_agent_data = agent_values[best_doc]
-        best_id = best_agent_data["object_id"]
-
-        query_time = time.time() - start_time
-        self.total_time += query_time
-        self.query_count += 1
-
-        return best_id, best_agent_data["name"], selection_details
 
     def get_stats(self) -> Dict[str, float]:
         """Get timing statistics"""
@@ -175,6 +145,36 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
             ),
             "query_count": self.query_count,
         }
+
+
+def write_results(
+    query: str,
+    selected_agent: str,
+    expected_agent: str,
+    selection_details: List[Dict],
+    is_correct: bool,
+) -> Tuple[str, bool]:
+    """Write results to a markdown file and return the result text and correctness."""
+    result_text = f"## Query: {query}\n\n"
+    result_text += f"**Selected Agent**: {selected_agent}\n"
+    result_text += f"**Expected Agent**: {expected_agent}\n"
+    result_text += f"**Correct**: {'Yes' if is_correct else 'No'}\n\n"
+    result_text += "### Top 3 Agent Matches:\n\n"
+
+    sorted_details = sorted(selection_details, key=lambda x: x["combined_score"], reverse=True)[:3]
+    for detail in sorted_details:
+        result_text += f"**Agent**: {detail['agent_name']}\n"
+        result_text += f"- **Combined Score**: {detail['combined_score']:.4f}\n"
+        result_text += f"- **Distance**: {detail['distance']:.4f}\n"
+        result_text += f"- **Lexical Score**: {detail['lexical_score']:.4f}\n"
+        result_text += f"- **Average Rating**: {detail['average_rating']:.2f}\n"
+        result_text += f"- **Rated Responses**: {detail['rated_responses']}\n"
+        result_text += f"- **Distance Weight**: {1 - detail['rating_weight'] - 0.15:.2f}\n"
+        result_text += f"- **Rating Weight**: {detail['rating_weight']:.2f}\n"
+        result_text += f"- **Lexical Weight**: 0.15\n\n"
+
+    result_text += "\n---\n"
+    return result_text, is_correct
 
 
 def main():
@@ -215,7 +215,6 @@ def main():
                 result_agent,
                 query["agent"],
                 details,
-                output_dir,
                 query["object_id"] == result_id,
             )
 
