@@ -2,7 +2,7 @@ import os
 import json
 import torch
 from universa.memory.chromadb.persistent_chromadb import ChromaDB
-from data.benchmark_data import (
+from data.test_data import (
     QUERY_AGENT_MAPPING,
     get_benchmark_metrics,
     get_detailed_results,
