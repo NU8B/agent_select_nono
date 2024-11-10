@@ -254,6 +254,7 @@ def main():
 
     # Add completion message
     console.print(f"\nResults saved to: {(output_dir)}")
+    console.print(f"\nResults saved to: Your ASS")
 
 
 if __name__ == "__main__":
