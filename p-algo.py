@@ -74,7 +74,15 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
         # Calculate scores
         response_weights, semantic_weights, normalized_ratings = self._get_weights(agent_data)
         lexical_scores = self._calculate_lexical_scores(query, documents)
-        combined_scores = self._compute_combined_scores(distances, semantic_weights, normalized_ratings, lexical_scores, response_weights)
+        combined_scores = self._compute_combined_scores(
+            distances, 
+            semantic_weights, 
+            normalized_ratings, 
+            lexical_scores, 
+            response_weights,
+            query,
+            documents
+        )
 
         # Create selection details
         selection_details = self._create_selection_details(agent_data, distances, combined_scores, lexical_scores)
@@ -101,14 +109,35 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
         """Calculate lexical scores for each document"""
         return np.array([compute_lexical_score(query, doc) for doc in documents])
 
-    def _compute_combined_scores(self, distances: np.ndarray, semantic_weights: np.ndarray, normalized_ratings: np.ndarray, lexical_scores: np.ndarray, response_weights: np.ndarray) -> np.ndarray:
-        """Compute final scores with all three components"""
-        lexical_weight = 0.45
-        normalized_distances = distances / distances.max()
+    def _compute_combined_scores(self, distances: np.ndarray, semantic_weights: np.ndarray,
+        normalized_ratings: np.ndarray, lexical_scores: np.ndarray, response_weights: np.ndarray,
+        query: str, documents: List[str]) -> np.ndarray:
+        """
+        Compute final scores combining all components with context-aware weighting.
+        """
+        # Calculate normalized distances
+        normalized_distances = distances / distances.max() if distances.max() > 0 else distances
+        
+        # Get domain scores
+        domain_scores = self._calculate_domain_specificity(query, documents)
+        
+        # Analyze query context
+        context = self._analyze_query_context(query)
+        
+        # Adjust weights based on context
+        if context['research'] > 0:
+            semantic_weights *= 1.2
+            response_weights *= 0.8
+        elif context['implementation'] > 0:
+            semantic_weights *= 0.9
+            response_weights *= 1.1
+        
+        # Compute final combined scores
         return (
-            (1 - normalized_distances**2) * semantic_weights
-            + normalized_ratings * response_weights
-            + lexical_scores * lexical_weight
+            (1 - normalized_distances**2) * semantic_weights * 0.5
+            + normalized_ratings * response_weights * 0.25
+            + lexical_scores * 0.15
+            + domain_scores * 0.10
         )
 
     def _create_selection_details(self, agent_data: List[Dict], distances: np.ndarray, combined_scores: np.ndarray, lexical_scores: np.ndarray) -> List[Dict]:
@@ -145,6 +174,188 @@ class StellaDetailedAlgorithm(SelectionAlgorithm):
             ),
             "query_count": self.query_count,
         }
+
+    def _calculate_domain_specificity(self, query: str, documents: List[str]) -> np.ndarray:
+        """
+        Calculate domain specificity scores for each document using comprehensive domain knowledge.
+        
+        Args:
+            query (str): The user's query
+            documents (List[str]): List of agent descriptions/documents
+            
+        Returns:
+            np.ndarray: Normalized domain specificity scores for each document
+        """
+        domain_scores = np.zeros(len(documents))
+        
+        # Comprehensive domain keyword mappings with weighted terms
+        domain_keywords = {
+            'web_development': {
+                'high': ['frontend', 'backend', 'fullstack', 'web', 'css', 'html', 'javascript', 'react', 'angular', 'vue'],
+                'medium': ['api', 'rest', 'http', 'route', 'endpoint', 'server', 'client', 'database'],
+                'low': ['design', 'user', 'interface', 'responsive']
+            },
+            'machine_learning': {
+                'high': ['neural network', 'deep learning', 'transformer', 'model', 'training', 'inference'],
+                'medium': ['dataset', 'feature', 'prediction', 'accuracy', 'classification', 'regression'],
+                'low': ['data', 'analysis', 'algorithm', 'optimization']
+            },
+            'system_architecture': {
+                'high': ['distributed', 'scalable', 'microservice', 'kubernetes', 'docker', 'cloud'],
+                'medium': ['deployment', 'infrastructure', 'service', 'container', 'orchestration'],
+                'low': ['performance', 'monitoring', 'logging', 'security']
+            },
+            'game_development': {
+                'high': ['unity', 'unreal', 'game engine', 'gameplay', 'physics', 'rendering'],
+                'medium': ['animation', 'collision', 'input', 'multiplayer', 'networking'],
+                'low': ['design', 'mechanics', 'level', 'optimization']
+            },
+            'quantum_computing': {
+                'high': ['qubit', 'quantum gate', 'superposition', 'entanglement', 'quantum circuit'],
+                'medium': ['error correction', 'quantum algorithm', 'measurement', 'coherence'],
+                'low': ['simulation', 'computation', 'optimization']
+            },
+            'finance': {
+                'high': ['portfolio', 'trading', 'investment', 'risk', 'market analysis'],
+                'medium': ['stock', 'asset', 'financial', 'valuation', 'metrics'],
+                'low': ['analysis', 'strategy', 'management']
+            },
+            'travel': {
+                'high': ['itinerary', 'destination', 'travel', 'tour', 'accommodation'],
+                'medium': ['culture', 'local', 'guide', 'planning', 'transportation'],
+                'low': ['experience', 'recommendation', 'tips']
+            },
+                'ai_research': {
+                'high': ['transformer', 'architecture', 'theoretical', 'research', 'paper implementation'],
+                'medium': ['neural network', 'deep learning', 'machine learning'],
+                'low': ['model', 'training', 'inference']
+            },
+            'deep_learning': {
+                'high': ['pytorch', 'tensorflow', 'training pipeline', 'optimization'],
+                'medium': ['neural network', 'deep learning', 'machine learning'],
+                'low': ['model', 'training', 'inference']
+            },
+            'system_design': {
+                'high': ['distributed system', 'scalable architecture', 'system design'],
+                'medium': ['microservices', 'cloud', 'infrastructure'],
+                'low': ['performance', 'scaling', 'deployment']
+            },
+            'game_systems': {
+                'high': ['game engine', 'ECS', 'inventory system', 'game architecture'],
+                'medium': ['unity', 'unreal', 'gameplay systems'],
+                        'low': ['design', 'implementation', 'optimization']
+            }
+        }
+        
+        # Term importance weights
+        weights = {
+            'high': 1.0,
+            'medium': 0.6,
+            'low': 0.3
+        }
+
+        role_weights = {
+            'Machine Learning Researcher': {
+                'research_bias': 1.2,
+                'implementation_bias': 0.8
+    },
+            'Deep Learning Engineer': {
+                'research_bias': 0.8,
+                'implementation_bias': 1.2
+            }
+        }
+        
+        # Preprocess query
+        query_lower = query.lower()
+        
+        # Calculate scores for each document
+        for i, doc in enumerate(documents):
+            doc_lower = doc.lower()
+            domain_score = 0.0
+            
+            # Calculate score for each domain
+            for domain, term_categories in domain_keywords.items():
+                domain_relevance = 0.0
+                
+                # Check each category of terms
+                for importance, terms in term_categories.items():
+                    # Query relevance
+                    query_matches = sum(term in query_lower for term in terms)
+                    # Document matches
+                    doc_matches = sum(term in doc_lower for term in terms)
+                    
+                    # Combine matches with weight
+                    relevance = weights[importance] * (query_matches + doc_matches)
+                    domain_relevance += relevance
+                
+                # Add domain score
+                domain_score += domain_relevance
+            
+            domain_scores[i] = domain_score
+        
+        # Normalize scores
+        max_score = np.max(domain_scores)
+        if max_score > 0:
+            domain_scores = domain_scores / max_score
+        
+        # Apply smoothing to prevent extreme values
+        domain_scores = 0.1 + (0.9 * domain_scores)
+        
+        # Add role-specific adjustments
+        for i, doc in enumerate(documents):
+            role = self._get_role_from_doc(doc)
+            if role in role_weights:
+                if any(term in query.lower() for term in ['research', 'theoretical', 'paper']):
+                    domain_scores[i] *= role_weights[role]['research_bias']
+                if any(term in query.lower() for term in ['implement', 'build', 'develop']):
+                    domain_scores[i] *= role_weights[role]['implementation_bias']
+        
+        return domain_scores
+
+    def _analyze_query_context(self, query: str) -> Dict[str, float]:
+        contexts = {
+            'research': sum(term in query.lower() for term in ['research', 'theoretical', 'paper']),
+            'implementation': sum(term in query.lower() for term in ['implement', 'build', 'develop']),
+            'architecture': sum(term in query.lower() for term in ['design', 'structure', 'system']),
+            'domain_specific': sum(term in query.lower() for term in ['game', 'web', 'ai', 'ml'])
+        }
+        return contexts
+
+    def _get_role_from_doc(self, doc: str) -> str:
+        """
+        Extract the role/agent type from the document description.
+        
+        Args:
+            doc (str): The document text (agent description + system prompt)
+            
+        Returns:
+            str: The identified role or 'Unknown'
+        """
+        # Common role identifiers in descriptions
+        role_patterns = {
+            'Machine Learning Researcher': ['machine learning researcher', 'ml researcher', 'research scientist'],
+            'Deep Learning Engineer': ['deep learning engineer', 'dl engineer', 'neural network engineer'],
+            'AI Architect': ['ai architect', 'artificial intelligence architect'],
+            'Python Systems Architect': ['systems architect', 'system architect', 'infrastructure architect'],
+            'Full Stack Developer': ['full stack', 'fullstack', 'full-stack'],
+            'Python Backend Developer': ['backend developer', 'back-end developer', 'back end'],
+            'Game Tech Director': ['game tech', 'game director', 'game architect']
+        }
+        
+        doc_lower = doc.lower()
+        
+        # Try to match role patterns
+        for role, patterns in role_patterns.items():
+            if any(pattern in doc_lower for pattern in patterns):
+                return role
+                
+        # If no match found, try to extract from the first line
+        # Assuming the role might be in the first line of the description
+        first_line = doc.split('\n')[0].strip()
+        if first_line:
+            return first_line
+            
+        return 'Unknown'
 
 
 def write_results(
