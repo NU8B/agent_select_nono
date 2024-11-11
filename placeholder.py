@@ -1,3 +1,6 @@
+# Test with the benchmark from the official github repo
+# Accuracy: 18/24 (75.0%)
+
 import os
 import time
 import numpy as np
@@ -10,9 +13,9 @@ from rich.progress import (
     BarColumn,
     TimeElapsedColumn,
 )
-from rapidfuzz import fuzz
-import hashlib
-import torch
+from rapidfuzz import fuzz # Calculate lexical similarity
+import hashlib # Create a short, unique ID
+import torch 
 
 from benchmark.selection import SelectionAlgorithm
 from benchmark.benchmark import Benchmark
@@ -23,58 +26,26 @@ from config.weights import (
     BASE_SEMANTIC_WEIGHT,
     FIXED_LEXICAL_WEIGHT,
 )
-from benchmark.scoring import AgentScoring, WeightConfig
-from universa.tools.result_writer import ResultWriter
 
 console = Console()
 
 
 def compute_lexical_score(query: str, description: str) -> float:
-    """
-    Computes normalized lexical similarity between query and description using RapidFuzz.
-    
-    quick description:
-    - Uses token_sort_ratio to handle word order variations
-    - Normalizes output to [0,1] range by dividing by 100
-    - Case-insensitive comparison via .lower()
-    """
-    # Calculate lexical similarity score
+    """Compute normalized lexical similarity score"""
     return fuzz.token_sort_ratio(query.lower(), description.lower()) / 100.0
 
 
 class AgentCache:
-    """
-    Thread-safe caching mechanism for agent-related computations.
-    
-    quick description:
-    - O(1) lookup time for agent data via hash tables
-    - Pre-computed normalization of ratings and weights
-    - Dynamic weight adjustment based on response history
-    - Memory-efficient storage of frequently accessed metrics
-    
-    performance considerations:
-    - Initialization is O(n) where n is number of agents
-    - All subsequent lookups are O(1)
-    - Memory usage is O(n) for n agents
-    """
+    """Internal agent cache for the algorithm"""
 
     def __init__(self):
-        # Track maximum values for normalization
         self.max_rating = 0
         self.max_responses = 0
-        # Lookup dictionaries for O(1) access to agent data
         self.agent_lookup = {}
         self.agent_values = {}
 
     def _calculate_weights(self, response_ratio: float) -> Dict[str, float]:
-        """
-        Calculates dynamic weights for agent scoring components.
-        
-        Algorithm:
-        1. Increases rating weight as response_ratio increases
-        2. Decreases semantic weight proportionally
-        3. Maintains fixed lexical weight
-        """
+        """Calculate weights based on response ratio"""
         # Increase the rating weight proportionally with the response ratio
         rating_weight = BASE_RATING_WEIGHT + (RATING_RATIO_WEIGHT * response_ratio)
         # Decrease the semantic weight as the response ratio increases
@@ -112,6 +83,7 @@ class AgentCache:
 
     def initialize(self, agents: List[Dict]) -> None:
         """Initialize cache with agent data"""
+        # Determine the maximum rating and responses among all agents
         self.max_rating = max(agent["average_rating"] for agent in agents)
         self.max_responses = max(agent["rated_responses"] for agent in agents)
 
@@ -135,34 +107,14 @@ class AgentCache:
 
 
 class StellaAlgorithm(SelectionAlgorithm):
-    """
-    Selection algorithm using semantic search with weighted scoring.
-    Combines ChromaDB vector search with multi-factor scoring including:
-    - Semantic similarity
-    - Historical performance (ratings)
-    - Lexical matching
-    """
-
     def __init__(self, agents: List[Dict[str, Any]], ids: List[str]) -> None:
         self.total_time = 0
         self.query_count = 0
         self.agent_cache = AgentCache()
-        self.scoring = AgentScoring(WeightConfig()) 
         super().__init__(agents, ids)
 
     def initialize(self, agents: List[Dict[str, Any]], ids: List[str]) -> None:
-        """
-        Initializes the algorithm's search infrastructure.
-        
-        steps:
-        1. Populates agent cache for quick access to normalized metrics
-        2. Creates deterministic collection name using agent descriptions
-        3. Initializes ChromaDB vector store if empty
-        
-        Args:
-            agents: List of agent configurations and historical data
-            ids: Unique identifiers for each agent
-        """
+        """Initialize the algorithm with provided agents and IDs"""
         start_time = time.time()
 
         # Initialize agent cache
@@ -190,22 +142,63 @@ class StellaAlgorithm(SelectionAlgorithm):
 
         self.init_time = time.time() - start_time
 
+    def _compute_scores(
+        self,
+        query: str,
+        documents: List[str],
+        distances: np.ndarray,
+        agent_data: List[Dict],
+    ) -> Tuple[np.ndarray, List[Dict]]:
+        """Compute scores and return combined scores with details"""
+        # Get pre-calculated weights and normalized values
+        response_weights = np.array([data["response_weight"] for data in agent_data])
+        semantic_weights = np.array([data["semantic_weight"] for data in agent_data])
+        lexical_weights = np.array([data["lexical_weight"] for data in agent_data])
+        normalized_ratings = np.array(
+            [data["normalized_rating"] for data in agent_data]
+        )
+
+        # Calculate components
+        lexical_scores = np.array(
+            [compute_lexical_score(query, doc) for doc in documents]
+        )
+        normalized_distances = distances / distances.max()
+
+        # Compute final scores
+        combined_scores = (
+            (1 - normalized_distances**2) * semantic_weights
+            + normalized_ratings * response_weights
+            + lexical_scores * lexical_weights
+        )
+
+        # Create selection details
+        selection_details = [
+            {
+                "agent_name": data["name"],
+                "distance": float(dist),
+                "normalized_distance": float(norm_dist),
+                "average_rating": float(data["average_rating"]),
+                "normalized_rating": float(data["normalized_rating"]),
+                "rating_weight": float(data["response_weight"]),
+                "semantic_weight": float(data["semantic_weight"]),
+                "lexical_score": float(lex_score),
+                "combined_score": float(score),
+                "rated_responses": data["rated_responses"],
+                "lexical_weight": float(data["lexical_weight"]),
+            }
+            for data, dist, norm_dist, lex_score, score in zip(
+                agent_data,
+                distances,
+                normalized_distances,
+                lexical_scores,
+                combined_scores,
+            )
+        ]
+
+        return combined_scores, selection_details
+
     def select(self, query: str) -> Tuple[str, str, List[Dict]]:
-        """
-        Performs optimized agent selection for given query.
-        
-        Process flow:
-        1. Vector similarity search via ChromaDB
-        2. Retrieves cached agent metrics
-        3. Computes weighted scores combining:
-           - Semantic similarity (from vector search)
-           - Historical performance
-           - Lexical similarity
-        4. Returns best matching agent with detailed scoring breakdown
-        
-        Returns:
-            Tuple of (agent_id, agent_name, detailed_scoring_results)
-        """
+        """Select best agent with optimized processing"""
         start_time = time.time()
 
         # Get matches from ChromaDB
@@ -214,41 +207,26 @@ class StellaAlgorithm(SelectionAlgorithm):
         distances = np.array(result["distances"][0])
 
         # Get agent data
-        agent_data = [self.agent_cache.agent_values[doc] for doc in documents]
+        cache_values = self.agent_cache.agent_values
+        agent_lookup = self.agent_cache.agent_lookup
+        agent_data = [cache_values[doc] for doc in documents]
 
-        # Compute scores using new scoring system
-        combined_scores, detailed_results = self.scoring.compute_scores(
+        # Compute scores and get details
+        combined_scores, selection_details = self._compute_scores(
             query, documents, distances, agent_data
         )
 
         # Select best match
         best_idx = np.argmax(combined_scores)
         best_doc = documents[best_idx]
-        best_agent_data = self.agent_cache.agent_values[best_doc]
-
-        # Convert detailed_results to the expected format for backwards compatibility
-        selection_details = [
-            {
-                "agent_name": result.agent_name,
-                "distance": result.raw_distance,
-                "normalized_distance": result.normalized_distance,
-                "average_rating": result.average_rating,
-                "normalized_rating": result.score_components.rating_score,
-                "rating_weight": result.score_components.weights.rating_weight,
-                "semantic_weight": result.score_components.weights.semantic_weight,
-                "lexical_score": result.score_components.lexical_score,
-                "combined_score": result.score_components.combined_score,
-                "rated_responses": result.rated_responses,
-                "lexical_weight": result.score_components.weights.lexical_weight,
-            }
-            for result in detailed_results
-        ]
+        best_agent_data = cache_values[best_doc]
+        best_id = best_agent_data["object_id"]
 
         # Update timing stats
         self.total_time += time.time() - start_time
         self.query_count += 1
 
-        return best_agent_data["object_id"], best_agent_data["name"], selection_details
+        return best_id, best_agent_data["name"], selection_details
 
     def get_stats(self) -> Dict[str, float]:
         """Get timing statistics"""
@@ -262,29 +240,78 @@ class StellaAlgorithm(SelectionAlgorithm):
         }
 
 
+def write_results(
+    query: str,
+    agent_name: str,
+    expected_agent: str,
+    details: List[Dict],
+    is_correct: bool,
+) -> str:
+    """Format detailed results for a query"""
+    result_text = f"\n## Query: {query}\n"
+    result_text += f"**Benchmark**: [{'CORRECT' if is_correct else f'INCORRECT - Expected: {expected_agent}'}]**\n\n"
+    result_text += f"**Selected Agent**: {agent_name}\n"
+    result_text += "\n### Top 3 Agent Matches:\n\n"
+
+    sorted_details = sorted(details, key=lambda x: x["combined_score"], reverse=True)[
+        :3
+    ]
+    for detail in sorted_details:
+        result_text += f"**Agent**: {detail['agent_name']}\n"
+        result_text += f"- **Combined Score**: {detail['combined_score']:.4f}\n"
+        result_text += f"- **Distance**: {detail['distance']:.4f}\n"
+        result_text += f"- **Lexical Score**: {detail['lexical_score']:.4f}\n"
+        result_text += f"- **Average Rating**: {detail['average_rating']:.2f}\n"
+        result_text += f"- **Rated Responses**: {detail['rated_responses']}\n"
+        result_text += f"- **Distance Weight**: {detail['semantic_weight']:.2f}\n"
+        result_text += f"- **Rating Weight**: {detail['rating_weight']:.2f}\n"
+        result_text += f"- **Lexical Weight**: {detail['lexical_weight']:.2f}\n\n"
+
+    result_text += "\n---\n"
+    return result_text
+
+
+def write_benchmark_results(results: List[Dict], output_dir: str, stats: Dict) -> None:
+    """Write detailed benchmark results to markdown file"""
+    with open(
+        os.path.join(output_dir, "benchmark_result.md"), "w", encoding="utf-8"
+    ) as f:
+        # Write header and summary
+        f.write("# Agent Selection Results\n\n")
+        f.write("## Benchmark Summary\n\n")
+
+        total_queries = len(results)
+        correct_predictions = sum(1 for r in results if r["is_correct"])
+        accuracy = correct_predictions / total_queries
+
+        f.write(f"**Accuracy**: {accuracy:.2%}\n")
+        f.write(f"**Correct Predictions**: {correct_predictions}/{total_queries}\n\n")
+
+        # Sort results into correct and incorrect
+        incorrect_results = [r for r in results if not r["is_correct"]]
+        correct_results = [r for r in results if r["is_correct"]]
+
+        # Write incorrect predictions first
+        if incorrect_results:
+            f.write("## ❌ Incorrect Predictions\n")
+            for result in incorrect_results:
+                f.write(result["details"])
+
+        # Write correct predictions second
+        if correct_results:
+            f.write("## ✅ Correct Predictions\n")
+            for result in correct_results:
+                f.write(result["details"])
+
+
 def main():
-    """
-    Benchmark execution pipeline for agent selection algorithm.
-    
-    Pipeline stages:
-    1. Environment setup (GPU/CPU detection, output directory creation)
-    2. Algorithm initialization with agent corpus
-    3. Iterative query processing with progress tracking
-    4. Performance metrics calculation
-    5. Results persistence and reporting
-    
-    Output artifacts:
-    - Detailed selection results for each query
-    - Performance metrics (timing, accuracy)
-    - Summary report
-    """
+    """Main benchmark execution"""
     output_dir = os.path.join("output", "benchmark")
     os.makedirs(output_dir, exist_ok=True)
 
     benchmark = Benchmark()
     total_start_time = time.time()
     algorithm = StellaAlgorithm(benchmark.agents, benchmark.agent_ids)
-    result_writer = ResultWriter()
 
     if torch.cuda.is_available():
         console.print(f"[green]Using GPU: {torch.cuda.get_device_name(0)}[/green]")
@@ -316,7 +343,7 @@ def main():
                     "predicted_agent": result_agent,
                     "expected_agent": query["agent"],
                     "is_correct": is_correct,
-                    "details": result_writer.write_result(
+                    "details": write_results(
                         query["query"],
                         result_agent,
                         query["agent"],
@@ -333,10 +360,29 @@ def main():
     stats = algorithm.get_stats()
     correct_predictions = sum(1 for r in results if r["is_correct"])
     total_queries = len(results)
+    accuracy = correct_predictions / total_queries
 
-    # Write results and print summary
-    result_writer.write_benchmark_results(results, output_dir, stats)
-    result_writer.print_summary(output_dir, total_time, stats, correct_predictions, total_queries)
+    # Write detailed results to file
+    write_benchmark_results(results, output_dir, stats)
+
+    # Print summary to console
+    console.print(f"\n📂 Results saved to: [cyan]{output_dir}[/cyan]")
+    console.print(
+        f"⏱️  [bold white]Total execution time: {total_time:.2f} seconds[/bold white]"
+    )
+    console.print(
+        f"⚙️  Initialization time: [bold yellow]{stats['initialization_time']:.2f}[/bold yellow] seconds"
+    )
+    console.print(
+        f"🔄 Query processing time: [bold yellow]{stats['total_query_time']:.2f}[/bold yellow] seconds"
+    )
+    console.print(f"   ├─ Number of queries: [dim]{stats['query_count']}[/dim]")
+    console.print(
+        f"   ├─ Average query time: [dim]{stats['average_query_time']:.4f}[/dim] seconds"
+    )
+    console.print(
+        f"   └─ Accuracy: [dim]{correct_predictions}/{total_queries}[/dim] ({accuracy:.1%})"
+    )
 
 
 if __name__ == "__main__":
