@@ -31,18 +31,37 @@ console = Console()
 
 def compute_lexical_score(query: str, description: str) -> float:
     """
-    Computes normalized lexical similarity between query and description using fuzzy matching.
-    Returns a normalized score between 0 and 1, where 1 indicates perfect match.
-    Uses token sort ratio to handle word order variations.
+    Computes normalized lexical similarity between query and description using RapidFuzz.
+    
+    quick description:
+    - Uses token_sort_ratio to handle word order variations
+    - Normalizes output to [0,1] range by dividing by 100
+    - Case-insensitive comparison via .lower()
+    
+    Args:
+        query: The search query string
+        description: The agent description to compare against
+        
+    Returns:
+        float: Normalized similarity score between 0 and 1
     """
     return fuzz.token_sort_ratio(query.lower(), description.lower()) / 100.0
 
 
 class AgentCache:
     """
-    Optimized caching mechanism for agent-related computations.
-    Maintains normalized ratings, response metrics, and pre-computed weights
-    to minimize redundant calculations during agent selection.
+    Thread-safe caching mechanism for agent-related computations.
+    
+    quick description:
+    - O(1) lookup time for agent data via hash tables
+    - Pre-computed normalization of ratings and weights
+    - Dynamic weight adjustment based on response history
+    - Memory-efficient storage of frequently accessed metrics
+    
+    performance considerations:
+    - Initialization is O(n) where n is number of agents
+    - All subsequent lookups are O(1)
+    - Memory usage is O(n) for n agents
     """
 
     def __init__(self):
@@ -55,15 +74,21 @@ class AgentCache:
 
     def _calculate_weights(self, response_ratio: float) -> Dict[str, float]:
         """
-        Dynamically adjusts weight distribution based on agent response ratio.
+        Calculates dynamic weights for agent scoring components.
         
+        Algorithm:
+        1. Increases rating weight as response_ratio increases
+        2. Decreases semantic weight proportionally
+        3. Maintains fixed lexical weight
+          
         Args:
-            response_ratio: Ratio of agent's rated responses to maximum responses
+            response_ratio: (agent_responses / max_responses) ∈ [0,1]
         
         Returns:
-            Dictionary containing adjusted weights for rating, semantic, and lexical components
-        
-        Note: As response_ratio increases, rating weight increases while semantic weight decreases
+            Dict containing:
+            - rating_weight: Adjusted by response history
+            - semantic_weight: Inversely proportional to rating_weight
+            - lexical_weight: Constant defined in config
         """
         rating_weight = BASE_RATING_WEIGHT + (RATING_RATIO_WEIGHT * response_ratio)
         semantic_weight = BASE_SEMANTIC_WEIGHT - (RATING_RATIO_WEIGHT * response_ratio)
