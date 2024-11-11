@@ -34,7 +34,9 @@ console = Console()
 
 @functools.lru_cache(maxsize=1)
 def load_agents() -> List:
-    """Load agent definitions with memory-efficient processing"""
+    """Load agent definitions with memory-efficient processing.
+    Uses LRU cache to prevent repeated file reads and dynamic type creation
+    for optimal memory usage when dealing with multiple agent definitions."""
     agents = []
     for filename in os.listdir("data/agents"):
         if filename.endswith(".json"):
@@ -56,12 +58,15 @@ def load_agents() -> List:
 
 
 def compute_lexical_score(query: str, description: str) -> float:
-    """Compute normalized lexical similarity score"""
+    """Compute normalized lexical similarity score using fuzzy string matching.
+    Returns a value between 0 and 1, where 1 indicates perfect match.
+    Uses token_sort_ratio to handle word order differences."""
     return fuzz.token_sort_ratio(query.lower(), description.lower()) / 100.0
 
 
 class AgentCache:
-    """Internal agent cache for the algorithm"""
+    """Internal agent cache for the algorithm that stores pre-computed values and weights
+    to avoid redundant calculations during agent selection"""
 
     def __init__(self):
         self.max_rating = 0
@@ -70,7 +75,9 @@ class AgentCache:
         self.agent_values = {}
 
     def _calculate_weights(self, response_ratio: float) -> Dict[str, float]:
-        """Calculate weights based on response ratio"""
+        """Calculate dynamic weights based on response ratio (number of rated responses)
+        - Higher response ratio increases rating weight and decreases semantic weight
+        - Lexical weight remains fixed"""
         rating_weight = BASE_RATING_WEIGHT + (RATING_RATIO_WEIGHT * response_ratio)
         semantic_weight = BASE_SEMANTIC_WEIGHT - (RATING_RATIO_WEIGHT * response_ratio)
         return {
@@ -133,7 +140,11 @@ class StellaTestAlgorithm:
         self.initialize()
 
     def initialize(self):
-        """Initialize the algorithm with agents and ChromaDB"""
+        """Initialize the algorithm with agents and ChromaDB.
+        - Loads and caches agent data
+        - Creates a unique collection name based on agent descriptions
+        - Initializes ChromaDB for vector similarity search
+        - Measures initialization time for performance tracking"""
         start_time = time.time()
 
         # Load agents and initialize cache
@@ -167,7 +178,12 @@ class StellaTestAlgorithm:
         agent_data: List[Dict],
         agents_list: List,
     ) -> Tuple[np.ndarray, List[Dict]]:
-        """Compute scores and return combined scores with details"""
+        """Compute final scores using a weighted combination of three factors:
+        1. Semantic similarity (from ChromaDB embeddings) - weighted by semantic_weight
+        2. Agent rating performance - weighted by response_weight
+        3. Lexical similarity (fuzzy string matching) - weighted by lexical_weight
+        
+        The weights are dynamically adjusted based on how many rated responses an agent has"""
         # Get pre-calculated weights and normalized values
         response_weights = np.array([data["response_weight"] for data in agent_data])
         semantic_weights = np.array([data["semantic_weight"] for data in agent_data])
@@ -182,7 +198,10 @@ class StellaTestAlgorithm:
         )
         normalized_distances = distances / distances.max()
 
-        # Compute final scores
+        # Final score combines three components:
+        # 1. Semantic score: (1 - normalized_distances²) gives higher score for smaller distances
+        # 2. Rating score: normalized_ratings weighted by response confidence
+        # 3. Lexical score: direct string similarity
         combined_scores = (
             (1 - normalized_distances**2) * semantic_weights
             + normalized_ratings * response_weights
@@ -220,7 +239,16 @@ class StellaTestAlgorithm:
         return combined_scores, selection_details
 
     def select(self, query: str) -> Tuple[object, List[Dict]]:
-        """Select best agent with optimized processing"""
+        """Select best agent with optimized processing.
+        
+        Process:
+        1. Query ChromaDB for semantic similarity matches
+        2. Retrieve pre-calculated agent data from cache
+        3. Compute combined scores using semantic, rating, and lexical factors
+        4. Return best matching agent and detailed selection metrics
+        
+        Returns:
+            Tuple containing (best_agent, selection_details)"""
         start_time = time.time()
 
         # Get matches from ChromaDB
@@ -264,7 +292,14 @@ class StellaTestAlgorithm:
 
 
 def write_results(query: str, selected_agent: object, details: List[Dict]) -> str:
-    """Write detailed results for each query"""
+    """Write detailed results for each query in markdown format.
+    
+    Includes:
+    - Selected agent name
+    - Top 3 agent matches with detailed scoring breakdown
+    - Component scores (combined, distance, lexical)
+    - Agent statistics (ratings, responses)
+    - Weight distributions used in selection"""
     result_text = f"**Selected Agent**: {selected_agent.name}\n"
     result_text += "\n### Top 3 Agent Matches:\n\n"
 
@@ -287,7 +322,12 @@ def write_results(query: str, selected_agent: object, details: List[Dict]) -> st
 
 
 def write_benchmark_results(predictions: dict, output_dir: str) -> None:
-    """Write benchmark results to output files"""
+    """Write benchmark results to output files in markdown format.
+    Organizes results into two sections:
+    1. Incorrect predictions - Shows where the algorithm made mistakes
+    2. Correct predictions - Shows successful matches
+    
+    Each prediction includes detailed scoring breakdown and weights used"""
     metrics = get_benchmark_metrics(
         {k: v["predicted_agent"] for k, v in predictions.items()}
     )
@@ -337,7 +377,11 @@ def write_benchmark_results(predictions: dict, output_dir: str) -> None:
 
 
 def main():
-    """Main execution function"""
+    """Main execution function that:
+    1. Initializes the algorithm and GPU if available
+    2. Processes all test queries with progress tracking
+    3. Writes detailed results to output directory
+    4. Displays performance metrics including timing and accuracy"""
     # Setup
     output_dir = "output/test"
     os.makedirs(output_dir, exist_ok=True)
