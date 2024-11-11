@@ -144,7 +144,7 @@ class AgentCache:
 
 class StellaAlgorithm(SelectionAlgorithm):
     """
-    Advanced agent selection algorithm implementing semantic search with weighted scoring.
+    Selection algorithm using semantic search with weighted scoring.
     Combines ChromaDB vector search with multi-factor scoring including:
     - Semantic similarity
     - Historical performance (ratings)
