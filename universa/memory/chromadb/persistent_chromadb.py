@@ -19,6 +19,7 @@ class ChromaDB:
         persist_directory: str = "chroma_db",
         embedding_function: Optional[BaseEmbeddingFunction] = None,
     ):
+        # Store the collection name and set the embedding function
         self.collection_name = collection_name
 
         # Initialize client with allow_reset=True
@@ -73,6 +74,7 @@ class ChromaDB:
         metadatas: Optional[List[Dict[str, Any]]] = None,
         embeddings: Optional[List[List[float]]] = None,
     ) -> None:
+<<<<<<< Updated upstream
         """Add data to collection if not already present"""
         try:
             # Get existing IDs or empty set if collection is empty
@@ -102,14 +104,45 @@ class ChromaDB:
                     ids=new_ids,
                     metadatas=new_metadatas,
                     embeddings=embeddings,
+=======
+        """Add new data to collection"""
+        # Get existing document IDs
+        existing_ids = (
+            set(self.collection.get()["ids"]) if self.get_count() > 0 else set()
+        )
+
+        # Prepare lists
+        new_docs = []
+        new_ids = []
+        new_metadatas = []
+
+        # Filter out existing documents
+        for i, doc_id in enumerate(ids):
+            if doc_id not in existing_ids:
+                new_docs.append(documents[i])
+                new_ids.append(doc_id)
+                new_metadatas.append(
+                    metadatas[i] if metadatas else {"source": "agent_description"}
+>>>>>>> Stashed changes
                 )
                 print(f"Added {len(new_docs)} new documents to collection")
             else:
                 print("All documents already exist in collection")
 
+<<<<<<< Updated upstream
         except Exception as e:
             print(f"Error adding data to collection: {e}")
             raise
+=======
+        # Add new documents to collection if there are any
+        if new_docs:
+            self.collection.add(
+                documents=new_docs,
+                ids=new_ids,
+                metadatas=new_metadatas,
+            )
+            print(f"Added {len(new_docs)} new documents to collection")
+>>>>>>> Stashed changes
 
     def query_data(
         self,

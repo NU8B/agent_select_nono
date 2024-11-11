@@ -1,3 +1,4 @@
+# Our own benchmark
 # Dictionary mapping queries to their ideal agents
 QUERY_AGENT_MAPPING = {
     "Suggest a 2-week Italian food tour itinerary.": "Travel Planning Agent",
@@ -60,13 +61,21 @@ def get_benchmark_metrics(predictions: dict) -> dict:
     Returns:
         Dict containing accuracy metrics
     """
+<<<<<<< Updated upstream:data/benchmark_data.py
     total = len(QUERY_AGENT_MAPPING)
+=======
+    # Get total number of queries
+    total = len(QUERY_AGENT_MAPPING)
+
+    # Count for correct predictions
+>>>>>>> Stashed changes:data/test_data.py
     correct = sum(
         1
         for query, agent in predictions.items()
         if agent == QUERY_AGENT_MAPPING.get(query)
     )
 
+    # Return the accuracy metrics
     return {
         "total_queries": total,
         "correct_predictions": correct,
@@ -85,9 +94,19 @@ def get_detailed_results(predictions: dict) -> list:
     Returns:
         List of dicts containing query-level results
     """
+<<<<<<< Updated upstream:data/benchmark_data.py
     results = []
     for query, predicted_agent in predictions.items():
         correct_agent = QUERY_AGENT_MAPPING.get(query)
+=======
+    results = []  # Create empty list to store results
+
+    # Loop for each query and predicted agent
+    for query, predicted_agent in predictions.items():
+        # Get the correct agent for the query
+        correct_agent = QUERY_AGENT_MAPPING.get(query)
+        # Append the results to the list
+>>>>>>> Stashed changes:data/test_data.py
         results.append(
             {
                 "query": query,
@@ -96,4 +115,9 @@ def get_detailed_results(predictions: dict) -> list:
                 "is_correct": predicted_agent == correct_agent,
             }
         )
+<<<<<<< Updated upstream:data/benchmark_data.py
     return results
+=======
+
+    return results
+>>>>>>> Stashed changes:data/test_data.py
