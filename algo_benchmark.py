@@ -15,10 +15,6 @@ from rapidfuzz import fuzz
 import hashlib
 import torch
 
-# Add the project root to Python path
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(ROOT_DIR)
-
 from benchmark.selection import SelectionAlgorithm
 from benchmark.benchmark import Benchmark
 from universa.memory.chromadb.persistent_chromadb import ChromaDB
@@ -301,16 +297,15 @@ def main():
     output_dir = os.path.join("output", "benchmark")
     os.makedirs(output_dir, exist_ok=True)
 
-    # Add GPU detection
+    benchmark = Benchmark()
+    total_start_time = time.time()
+    algorithm = StellaAlgorithm(benchmark.agents, benchmark.agent_ids)
+
     if torch.cuda.is_available():
         console.print(f"[green]Using GPU: {torch.cuda.get_device_name(0)}[/green]")
         torch.cuda.empty_cache()
     else:
         console.print("[yellow]GPU not available, using CPU[/yellow]")
-
-    benchmark = Benchmark()
-    total_start_time = time.time()
-    algorithm = StellaAlgorithm(benchmark.agents, benchmark.agent_ids)
 
     # Process queries with progress bar
     results = []
