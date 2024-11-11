@@ -1,19 +1,25 @@
 from dataclasses import dataclass
 from typing import Optional
+from config.weights import (
+    BASE_RATING_WEIGHT,
+    BASE_SEMANTIC_WEIGHT,
+    FIXED_LEXICAL_WEIGHT,
+    RATING_RATIO_WEIGHT,
+)
 
 @dataclass(frozen=True)
 class WeightConfig:
     # Base weights
-    base_rating_weight: float = 0.3
-    base_semantic_weight: float = 0.5
-    fixed_lexical_weight: float = 0.2
+    base_rating_weight: float = BASE_RATING_WEIGHT  # Changed to 0.2
+    base_semantic_weight: float = BASE_SEMANTIC_WEIGHT  # Changed to 0.7
+    fixed_lexical_weight: float = FIXED_LEXICAL_WEIGHT  # Changed to 0.1
     
     # Adjustment factors
-    rating_ratio_weight: float = 0.2
+    rating_ratio_weight: float = RATING_RATIO_WEIGHT  # Changed to 0.1
     
     # Optional min/max bounds for safety
-    min_semantic_weight: float = 0.2
-    max_rating_weight: float = 0.7
+    min_semantic_weight: float = 0.6  # Adjusted to match new semantic range
+    max_rating_weight: float = 0.3  # Adjusted to match new rating range
 
     def calculate_dynamic_weights(self, response_ratio: float) -> "DynamicWeights":
         """Calculate weights based on response ratio"""

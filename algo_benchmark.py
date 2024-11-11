@@ -24,6 +24,7 @@ from config.weights import (
     FIXED_LEXICAL_WEIGHT,
 )
 from benchmark.scoring import AgentScoring, WeightConfig
+from universa.tools.result_writer import ResultWriter
 
 console = Console()
 
@@ -189,70 +190,6 @@ class StellaAlgorithm(SelectionAlgorithm):
         }
 
 
-def write_results(
-    query: str,
-    agent_name: str,
-    expected_agent: str,
-    details: List[Dict],
-    is_correct: bool,
-) -> str:
-    """Format detailed results for a query"""
-    result_text = f"\n## Query: {query}\n"
-    result_text += f"**Benchmark**: [{'CORRECT' if is_correct else f'INCORRECT - Expected: {expected_agent}'}]**\n\n"
-    result_text += f"**Selected Agent**: {agent_name}\n"
-    result_text += "\n### Top 3 Agent Matches:\n\n"
-
-    sorted_details = sorted(details, key=lambda x: x["combined_score"], reverse=True)[
-        :3
-    ]
-    for detail in sorted_details:
-        result_text += f"**Agent**: {detail['agent_name']}\n"
-        result_text += f"- **Combined Score**: {detail['combined_score']:.4f}\n"
-        result_text += f"- **Distance**: {detail['distance']:.4f}\n"
-        result_text += f"- **Lexical Score**: {detail['lexical_score']:.4f}\n"
-        result_text += f"- **Average Rating**: {detail['average_rating']:.2f}\n"
-        result_text += f"- **Rated Responses**: {detail['rated_responses']}\n"
-        result_text += f"- **Distance Weight**: {detail['semantic_weight']:.2f}\n"
-        result_text += f"- **Rating Weight**: {detail['rating_weight']:.2f}\n"
-        result_text += f"- **Lexical Weight**: {detail['lexical_weight']:.2f}\n\n"
-
-    result_text += "\n---\n"
-    return result_text
-
-
-def write_benchmark_results(results: List[Dict], output_dir: str, stats: Dict) -> None:
-    """Write detailed benchmark results to markdown file"""
-    with open(
-        os.path.join(output_dir, "benchmark_result.md"), "w", encoding="utf-8"
-    ) as f:
-        # Write header and summary
-        f.write("# Agent Selection Results\n\n")
-        f.write("## Benchmark Summary\n\n")
-
-        total_queries = len(results)
-        correct_predictions = sum(1 for r in results if r["is_correct"])
-        accuracy = correct_predictions / total_queries
-
-        f.write(f"**Accuracy**: {accuracy:.2%}\n")
-        f.write(f"**Correct Predictions**: {correct_predictions}/{total_queries}\n\n")
-
-        # Sort results into correct and incorrect
-        incorrect_results = [r for r in results if not r["is_correct"]]
-        correct_results = [r for r in results if r["is_correct"]]
-
-        # Write incorrect predictions first
-        if incorrect_results:
-            f.write("## ❌ Incorrect Predictions\n")
-            for result in incorrect_results:
-                f.write(result["details"])
-
-        # Write correct predictions second
-        if correct_results:
-            f.write("## ✅ Correct Predictions\n")
-            for result in correct_results:
-                f.write(result["details"])
-
-
 def main():
     """Main benchmark execution"""
     output_dir = os.path.join("output", "benchmark")
@@ -261,6 +198,7 @@ def main():
     benchmark = Benchmark()
     total_start_time = time.time()
     algorithm = StellaAlgorithm(benchmark.agents, benchmark.agent_ids)
+    result_writer = ResultWriter()
 
     if torch.cuda.is_available():
         console.print(f"[green]Using GPU: {torch.cuda.get_device_name(0)}[/green]")
@@ -292,7 +230,7 @@ def main():
                     "predicted_agent": result_agent,
                     "expected_agent": query["agent"],
                     "is_correct": is_correct,
-                    "details": write_results(
+                    "details": result_writer.write_result(
                         query["query"],
                         result_agent,
                         query["agent"],
@@ -312,7 +250,7 @@ def main():
     accuracy = correct_predictions / total_queries
 
     # Write detailed results to file
-    write_benchmark_results(results, output_dir, stats)
+    result_writer.write_benchmark_results(results, output_dir, stats)
 
     # Print summary to console
     console.print(f"\n📂 Results saved to: [cyan]{output_dir}[/cyan]")
