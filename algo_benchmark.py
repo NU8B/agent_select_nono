@@ -30,21 +30,41 @@ console = Console()
 
 
 def compute_lexical_score(query: str, description: str) -> float:
-    """Compute normalized lexical similarity score"""
+    """
+    Computes normalized lexical similarity between query and description using fuzzy matching.
+    Returns a normalized score between 0 and 1, where 1 indicates perfect match.
+    Uses token sort ratio to handle word order variations.
+    """
     return fuzz.token_sort_ratio(query.lower(), description.lower()) / 100.0
 
 
 class AgentCache:
-    """Internal agent cache for the algorithm"""
+    """
+    Optimized caching mechanism for agent-related computations.
+    Maintains normalized ratings, response metrics, and pre-computed weights
+    to minimize redundant calculations during agent selection.
+    """
 
     def __init__(self):
+        # Track maximum values for normalization
         self.max_rating = 0
         self.max_responses = 0
+        # Lookup dictionaries for O(1) access to agent data
         self.agent_lookup = {}
         self.agent_values = {}
 
     def _calculate_weights(self, response_ratio: float) -> Dict[str, float]:
-        """Calculate weights based on response ratio"""
+        """
+        Dynamically adjusts weight distribution based on agent response ratio.
+        
+        Args:
+            response_ratio: Ratio of agent's rated responses to maximum responses
+        
+        Returns:
+            Dictionary containing adjusted weights for rating, semantic, and lexical components
+        
+        Note: As response_ratio increases, rating weight increases while semantic weight decreases
+        """
         rating_weight = BASE_RATING_WEIGHT + (RATING_RATIO_WEIGHT * response_ratio)
         semantic_weight = BASE_SEMANTIC_WEIGHT - (RATING_RATIO_WEIGHT * response_ratio)
         return {
@@ -98,6 +118,14 @@ class AgentCache:
 
 
 class StellaAlgorithm(SelectionAlgorithm):
+    """
+    Advanced agent selection algorithm implementing semantic search with weighted scoring.
+    Combines ChromaDB vector search with multi-factor scoring including:
+    - Semantic similarity
+    - Historical performance (ratings)
+    - Lexical matching
+    """
+
     def __init__(self, agents: List[Dict[str, Any]], ids: List[str]) -> None:
         self.total_time = 0
         self.query_count = 0
@@ -106,7 +134,18 @@ class StellaAlgorithm(SelectionAlgorithm):
         super().__init__(agents, ids)
 
     def initialize(self, agents: List[Dict[str, Any]], ids: List[str]) -> None:
-        """Initialize the algorithm with provided agents and IDs"""
+        """
+        Initializes the algorithm's search infrastructure.
+        
+        steps:
+        1. Populates agent cache for quick access to normalized metrics
+        2. Creates deterministic collection name using agent descriptions
+        3. Initializes ChromaDB vector store if empty
+        
+        Args:
+            agents: List of agent configurations and historical data
+            ids: Unique identifiers for each agent
+        """
         start_time = time.time()
 
         # Initialize agent cache
@@ -133,7 +172,21 @@ class StellaAlgorithm(SelectionAlgorithm):
         self.init_time = time.time() - start_time
 
     def select(self, query: str) -> Tuple[str, str, List[Dict]]:
-        """Select best agent with optimized processing"""
+        """
+        Performs optimized agent selection for given query.
+        
+        Process flow:
+        1. Vector similarity search via ChromaDB
+        2. Retrieves cached agent metrics
+        3. Computes weighted scores combining:
+           - Semantic similarity (from vector search)
+           - Historical performance
+           - Lexical similarity
+        4. Returns best matching agent with detailed scoring breakdown
+        
+        Returns:
+            Tuple of (agent_id, agent_name, detailed_scoring_results)
+        """
         start_time = time.time()
 
         # Get matches from ChromaDB
@@ -191,7 +244,21 @@ class StellaAlgorithm(SelectionAlgorithm):
 
 
 def main():
-    """Main benchmark execution"""
+    """
+    Benchmark execution pipeline for agent selection algorithm.
+    
+    Pipeline stages:
+    1. Environment setup (GPU/CPU detection, output directory creation)
+    2. Algorithm initialization with agent corpus
+    3. Iterative query processing with progress tracking
+    4. Performance metrics calculation
+    5. Results persistence and reporting
+    
+    Output artifacts:
+    - Detailed selection results for each query
+    - Performance metrics (timing, accuracy)
+    - Summary report
+    """
     output_dir = os.path.join("output", "benchmark")
     os.makedirs(output_dir, exist_ok=True)
 
