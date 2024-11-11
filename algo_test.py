@@ -1,12 +1,6 @@
 import os
 import json
 import torch
-from universa.memory.chromadb.persistent_chromadb import ChromaDB
-from data.test_data import (
-    QUERY_AGENT_MAPPING,
-    get_benchmark_metrics,
-    get_detailed_results,
-)
 import time
 from typing import List, Dict, Tuple
 from rich.console import Console
@@ -21,6 +15,13 @@ import numpy as np
 from rapidfuzz import fuzz
 import hashlib
 import functools
+
+from universa.memory.chromadb.persistent_chromadb import ChromaDB
+from data.test_data import (
+    QUERY_AGENT_MAPPING,
+    get_benchmark_metrics,
+    get_detailed_results,
+)
 from config.weights import (
     BASE_RATING_WEIGHT,
     RATING_RATIO_WEIGHT,
