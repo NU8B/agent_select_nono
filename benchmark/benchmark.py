@@ -19,7 +19,6 @@ class Benchmark:
         self.results = []
 
     def validate(self, algorithm: SelectionAlgorithm, verbose: bool = True) -> float:
-        """Run validation without progress bar"""
         total = len(self.queries)
         correct = 0
 
