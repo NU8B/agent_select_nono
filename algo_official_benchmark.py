@@ -1,3 +1,8 @@
+"""
+Test with the benchmark from the official github repo
+Accuracy: 18/24 (75.0%)
+"""
+
 import os
 import time
 import numpy as np
@@ -10,8 +15,8 @@ from rich.progress import (
     BarColumn,
     TimeElapsedColumn,
 )
-from rapidfuzz import fuzz
-import hashlib
+from rapidfuzz import fuzz # Calculate lexical similarity
+import hashlib # Create a short, unique ID
 import torch
 
 from benchmark.selection import SelectionAlgorithm
@@ -75,11 +80,8 @@ class AgentCache:
         2. Decreases semantic weight proportionally
         3. Maintains fixed lexical weight
         """
-        # Increase the rating weight proportionally with the response ratio
         rating_weight = BASE_RATING_WEIGHT + (RATING_RATIO_WEIGHT * response_ratio)
-        # Decrease the semantic weight as the response ratio increases
         semantic_weight = BASE_SEMANTIC_WEIGHT - (RATING_RATIO_WEIGHT * response_ratio)
-        # The lexical weight is fixed since it does not depend on the response ratio
         return {
             "rating_weight": rating_weight,
             "semantic_weight": semantic_weight,

@@ -1,3 +1,8 @@
+"""
+This also use the same algorithm as the official benchmark, but with our custom benchmark.
+Accuracy: 66/69 (95.7%)
+"""
+
 import os
 import json
 import torch
@@ -12,9 +17,9 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 import numpy as np
-from rapidfuzz import fuzz
-import hashlib
-import functools
+from rapidfuzz import fuzz # Calculate lexical similarity
+import hashlib # Create a short, unique ID
+import functools # Cache agent data for efficiency
 
 from universa.memory.chromadb.persistent_chromadb import ChromaDB
 from data.test_data import (
