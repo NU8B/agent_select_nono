@@ -13,6 +13,7 @@ from rich.progress import (
 )
 from rapidfuzz import fuzz
 import hashlib
+import torch
 
 # Add the project root to Python path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -21,7 +22,12 @@ sys.path.append(ROOT_DIR)
 from benchmark.selection import SelectionAlgorithm
 from benchmark.benchmark import Benchmark
 from universa.memory.chromadb.persistent_chromadb import ChromaDB
-from universa.utils.agent_compute_dict import agent_dict_cache
+from config.weights import (
+    BASE_RATING_WEIGHT,
+    RATING_RATIO_WEIGHT,
+    BASE_SEMANTIC_WEIGHT,
+    FIXED_LEXICAL_WEIGHT,
+)
 
 console = Console()
 
@@ -31,49 +37,82 @@ def compute_lexical_score(query: str, description: str) -> float:
     return fuzz.token_sort_ratio(query.lower(), description.lower()) / 100.0
 
 
-def write_results(
-    query: str,
-    agent_name: str,
-    expected_agent: str,
-    details: List[Dict],
-    is_correct: bool,
-) -> str:
-    """Format detailed results for a query"""
-    result_text = f"\n## Query: {query}\n"
-    result_text += f"**Benchmark**: [{'CORRECT' if is_correct else f'INCORRECT - Expected: {expected_agent}'}]**\n\n"
-    result_text += f"**Selected Agent**: {agent_name}\n"
-    result_text += "\n### Top 3 Agent Matches:\n\n"
+class AgentCache:
+    """Internal agent cache for the algorithm"""
 
-    sorted_details = sorted(details, key=lambda x: x["combined_score"], reverse=True)[
-        :3
-    ]
-    for detail in sorted_details:
-        result_text += f"**Agent**: {detail['agent_name']}\n"
-        result_text += f"- **Combined Score**: {detail['combined_score']:.4f}\n"
-        result_text += f"- **Distance**: {detail['distance']:.4f}\n"
-        result_text += f"- **Lexical Score**: {detail['lexical_score']:.4f}\n"
-        result_text += f"- **Average Rating**: {detail['average_rating']:.2f}\n"
-        result_text += f"- **Rated Responses**: {detail['rated_responses']}\n"
-        result_text += f"- **Distance Weight**: {detail['semantic_weight']:.2f}\n"
-        result_text += f"- **Rating Weight**: {detail['rating_weight']:.2f}\n"
-        result_text += f"- **Lexical Weight**: {detail['lexical_weight']:.2f}\n\n"
+    def __init__(self):
+        self.max_rating = 0
+        self.max_responses = 0
+        self.agent_lookup = {}
+        self.agent_values = {}
 
-    result_text += "\n---\n"
-    return result_text
+    def _calculate_weights(self, response_ratio: float) -> Dict[str, float]:
+        """Calculate weights based on response ratio"""
+        rating_weight = BASE_RATING_WEIGHT + (RATING_RATIO_WEIGHT * response_ratio)
+        semantic_weight = BASE_SEMANTIC_WEIGHT - (RATING_RATIO_WEIGHT * response_ratio)
+        return {
+            "rating_weight": rating_weight,
+            "semantic_weight": semantic_weight,
+            "lexical_weight": FIXED_LEXICAL_WEIGHT,
+        }
+
+    def _process_agent(
+        self, agent: Dict, max_rating: float, max_responses: float
+    ) -> Dict:
+        """Process individual agent data"""
+        response_ratio = agent["rated_responses"] / max_responses
+        weights = self._calculate_weights(response_ratio)
+
+        return {
+            "normalized_rating": (
+                agent["average_rating"] / max_rating if max_rating > 0 else 0
+            ),
+            "response_weight": weights["rating_weight"],
+            "semantic_weight": weights["semantic_weight"],
+            "lexical_weight": weights["lexical_weight"],
+            "rated_responses": agent["rated_responses"],
+            "average_rating": agent["average_rating"],
+            "name": agent["name"],
+            "object_id": agent["object_id"],
+        }
+
+    def initialize(self, agents: List[Dict]) -> None:
+        """Initialize cache with agent data"""
+        self.max_rating = max(agent["average_rating"] for agent in agents)
+        self.max_responses = max(agent["rated_responses"] for agent in agents)
+
+        # Create lookup dictionary
+        self.agent_lookup = {
+            agent["description"] + "\n\n" + agent["system_prompt"]: agent
+            for agent in agents
+        }
+
+        # Process agent values
+        self.agent_values = {
+            agent["description"]
+            + "\n\n"
+            + agent["system_prompt"]: self._process_agent(
+                agent,
+                self.max_rating,
+                self.max_responses,
+            )
+            for agent in agents
+        }
 
 
 class StellaAlgorithm(SelectionAlgorithm):
     def __init__(self, agents: List[Dict[str, Any]], ids: List[str]) -> None:
         self.total_time = 0
         self.query_count = 0
+        self.agent_cache = AgentCache()
         super().__init__(agents, ids)
 
     def initialize(self, agents: List[Dict[str, Any]], ids: List[str]) -> None:
         """Initialize the algorithm with provided agents and IDs"""
         start_time = time.time()
 
-        # Initialize agent cache with dictionary-based agents
-        agent_dict_cache.initialize(agents)
+        # Initialize agent cache
+        self.agent_cache.initialize(agents)
 
         # Create a unique collection name using a stable hash of the agent descriptions
         descriptions = [
@@ -160,10 +199,9 @@ class StellaAlgorithm(SelectionAlgorithm):
         distances = np.array(result["distances"][0])
 
         # Get agent data
-        cache_values = agent_dict_cache.values
-        agent_lookup = cache_values["agent_lookup"]
-        agent_values = cache_values["agent_values"]
-        agent_data = [agent_values[doc] for doc in documents]
+        cache_values = self.agent_cache.agent_values
+        agent_lookup = self.agent_cache.agent_lookup
+        agent_data = [cache_values[doc] for doc in documents]
 
         # Compute scores and get details
         combined_scores, selection_details = self._compute_scores(
@@ -173,7 +211,7 @@ class StellaAlgorithm(SelectionAlgorithm):
         # Select best match
         best_idx = np.argmax(combined_scores)
         best_doc = documents[best_idx]
-        best_agent_data = agent_values[best_doc]
+        best_agent_data = cache_values[best_doc]
         best_id = best_agent_data["object_id"]
 
         # Update timing stats
@@ -192,6 +230,37 @@ class StellaAlgorithm(SelectionAlgorithm):
             ),
             "query_count": self.query_count,
         }
+
+
+def write_results(
+    query: str,
+    agent_name: str,
+    expected_agent: str,
+    details: List[Dict],
+    is_correct: bool,
+) -> str:
+    """Format detailed results for a query"""
+    result_text = f"\n## Query: {query}\n"
+    result_text += f"**Benchmark**: [{'CORRECT' if is_correct else f'INCORRECT - Expected: {expected_agent}'}]**\n\n"
+    result_text += f"**Selected Agent**: {agent_name}\n"
+    result_text += "\n### Top 3 Agent Matches:\n\n"
+
+    sorted_details = sorted(details, key=lambda x: x["combined_score"], reverse=True)[
+        :3
+    ]
+    for detail in sorted_details:
+        result_text += f"**Agent**: {detail['agent_name']}\n"
+        result_text += f"- **Combined Score**: {detail['combined_score']:.4f}\n"
+        result_text += f"- **Distance**: {detail['distance']:.4f}\n"
+        result_text += f"- **Lexical Score**: {detail['lexical_score']:.4f}\n"
+        result_text += f"- **Average Rating**: {detail['average_rating']:.2f}\n"
+        result_text += f"- **Rated Responses**: {detail['rated_responses']}\n"
+        result_text += f"- **Distance Weight**: {detail['semantic_weight']:.2f}\n"
+        result_text += f"- **Rating Weight**: {detail['rating_weight']:.2f}\n"
+        result_text += f"- **Lexical Weight**: {detail['lexical_weight']:.2f}\n\n"
+
+    result_text += "\n---\n"
+    return result_text
 
 
 def write_benchmark_results(results: List[Dict], output_dir: str, stats: Dict) -> None:
@@ -231,6 +300,13 @@ def main():
     """Main benchmark execution"""
     output_dir = os.path.join("output", "benchmark")
     os.makedirs(output_dir, exist_ok=True)
+
+    # Add GPU detection
+    if torch.cuda.is_available():
+        console.print(f"[green]Using GPU: {torch.cuda.get_device_name(0)}[/green]")
+        torch.cuda.empty_cache()
+    else:
+        console.print("[yellow]GPU not available, using CPU[/yellow]")
 
     benchmark = Benchmark()
     total_start_time = time.time()

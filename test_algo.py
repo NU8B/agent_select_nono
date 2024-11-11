@@ -18,10 +18,15 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 import numpy as np
-from universa.utils.agent_compute import agent_cache
 from rapidfuzz import fuzz
 import hashlib
 import functools
+from config.weights import (
+    BASE_RATING_WEIGHT,
+    RATING_RATIO_WEIGHT,
+    BASE_SEMANTIC_WEIGHT,
+    FIXED_LEXICAL_WEIGHT,
+)
 
 console = Console()
 
@@ -54,10 +59,76 @@ def compute_lexical_score(query: str, description: str) -> float:
     return fuzz.token_sort_ratio(query.lower(), description.lower()) / 100.0
 
 
+class AgentCache:
+    """Internal agent cache for the algorithm"""
+
+    def __init__(self):
+        self.max_rating = 0
+        self.max_responses = 0
+        self.agent_lookup = {}
+        self.agent_values = {}
+
+    def _calculate_weights(self, response_ratio: float) -> Dict[str, float]:
+        """Calculate weights based on response ratio"""
+        rating_weight = BASE_RATING_WEIGHT + (RATING_RATIO_WEIGHT * response_ratio)
+        semantic_weight = BASE_SEMANTIC_WEIGHT - (RATING_RATIO_WEIGHT * response_ratio)
+        return {
+            "rating_weight": rating_weight,
+            "semantic_weight": semantic_weight,
+            "lexical_weight": FIXED_LEXICAL_WEIGHT,
+        }
+
+    def _process_agent(self, agent, max_rating: float, max_responses: float) -> Dict:
+        """Process individual agent data"""
+        response_ratio = agent.rated_responses / max_responses
+        weights = self._calculate_weights(response_ratio)
+
+        return {
+            "normalized_rating": (
+                agent.average_rating / max_rating if max_rating > 0 else 0
+            ),
+            "response_weight": weights["rating_weight"],
+            "semantic_weight": weights["semantic_weight"],
+            "lexical_weight": weights["lexical_weight"],
+            "rated_responses": agent.rated_responses,
+            "average_rating": agent.average_rating,
+            "name": agent.name,
+        }
+
+    def initialize(self, agents: List) -> None:
+        """Initialize cache with agent data"""
+        self.max_rating = max(agent.average_rating for agent in agents)
+        self.max_responses = max(agent.rated_responses for agent in agents)
+
+        # Create lookup dictionary
+        self.agent_lookup = {agent.description: agent for agent in agents}
+
+        # Process agent values
+        self.agent_values = {
+            agent.description: self._process_agent(
+                agent,
+                self.max_rating,
+                self.max_responses,
+            )
+            for agent in agents
+        }
+
+    @property
+    def values(self) -> Dict:
+        """Get cached values"""
+        return {
+            "max_rating": self.max_rating,
+            "max_responses": self.max_responses,
+            "agent_lookup": self.agent_lookup,
+            "agent_values": self.agent_values,
+        }
+
+
 class StellaTestAlgorithm:
     def __init__(self):
         self.total_time = 0
         self.query_count = 0
+        self.agent_cache = AgentCache()
         self.initialize()
 
     def initialize(self):
@@ -66,7 +137,7 @@ class StellaTestAlgorithm:
 
         # Load agents and initialize cache
         self.agents = load_agents()
-        agent_cache.initialize(self.agents)
+        self.agent_cache.initialize(self.agents)
 
         # Create unique collection name
         descriptions = [agent.description for agent in self.agents]
@@ -156,10 +227,9 @@ class StellaTestAlgorithm:
         documents = result["documents"][0]
         distances = np.array(result["distances"][0])
 
-        # Get agent data
-        cache_values = agent_cache.values
-        agent_lookup = cache_values["agent_lookup"]
-        agent_values = cache_values["agent_values"]
+        # Get agent data directly from cache properties
+        agent_lookup = self.agent_cache.agent_lookup
+        agent_values = self.agent_cache.agent_values
 
         # Get pre-calculated values for matched agents
         agent_data = [agent_values[doc] for doc in documents]
