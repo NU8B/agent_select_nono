@@ -23,6 +23,7 @@ from config.weights import (
     BASE_SEMANTIC_WEIGHT,
     FIXED_LEXICAL_WEIGHT,
 )
+from benchmark.scoring import AgentScoring, WeightConfig
 
 console = Console()
 
@@ -100,6 +101,7 @@ class StellaAlgorithm(SelectionAlgorithm):
         self.total_time = 0
         self.query_count = 0
         self.agent_cache = AgentCache()
+        self.scoring = AgentScoring(WeightConfig())  # Use default config or pass custom
         super().__init__(agents, ids)
 
     def initialize(self, agents: List[Dict[str, Any]], ids: List[str]) -> None:
@@ -129,61 +131,6 @@ class StellaAlgorithm(SelectionAlgorithm):
 
         self.init_time = time.time() - start_time
 
-    def _compute_scores(
-        self,
-        query: str,
-        documents: List[str],
-        distances: np.ndarray,
-        agent_data: List[Dict],
-    ) -> Tuple[np.ndarray, List[Dict]]:
-        """Compute scores and return combined scores with details"""
-        # Get pre-calculated weights and normalized values
-        response_weights = np.array([data["response_weight"] for data in agent_data])
-        semantic_weights = np.array([data["semantic_weight"] for data in agent_data])
-        lexical_weights = np.array([data["lexical_weight"] for data in agent_data])
-        normalized_ratings = np.array(
-            [data["normalized_rating"] for data in agent_data]
-        )
-
-        # Calculate components
-        lexical_scores = np.array(
-            [compute_lexical_score(query, doc) for doc in documents]
-        )
-        normalized_distances = distances / distances.max()
-
-        # Compute final scores
-        combined_scores = (
-            (1 - normalized_distances**2) * semantic_weights
-            + normalized_ratings * response_weights
-            + lexical_scores * lexical_weights
-        )
-
-        # Create selection details
-        selection_details = [
-            {
-                "agent_name": data["name"],
-                "distance": float(dist),
-                "normalized_distance": float(norm_dist),
-                "average_rating": float(data["average_rating"]),
-                "normalized_rating": float(data["normalized_rating"]),
-                "rating_weight": float(data["response_weight"]),
-                "semantic_weight": float(data["semantic_weight"]),
-                "lexical_score": float(lex_score),
-                "combined_score": float(score),
-                "rated_responses": data["rated_responses"],
-                "lexical_weight": float(data["lexical_weight"]),
-            }
-            for data, dist, norm_dist, lex_score, score in zip(
-                agent_data,
-                distances,
-                normalized_distances,
-                lexical_scores,
-                combined_scores,
-            )
-        ]
-
-        return combined_scores, selection_details
-
     def select(self, query: str) -> Tuple[str, str, List[Dict]]:
         """Select best agent with optimized processing"""
         start_time = time.time()
@@ -194,26 +141,41 @@ class StellaAlgorithm(SelectionAlgorithm):
         distances = np.array(result["distances"][0])
 
         # Get agent data
-        cache_values = self.agent_cache.agent_values
-        agent_lookup = self.agent_cache.agent_lookup
-        agent_data = [cache_values[doc] for doc in documents]
+        agent_data = [self.agent_cache.agent_values[doc] for doc in documents]
 
-        # Compute scores and get details
-        combined_scores, selection_details = self._compute_scores(
+        # Compute scores using new scoring system
+        combined_scores, detailed_results = self.scoring.compute_scores(
             query, documents, distances, agent_data
         )
 
         # Select best match
         best_idx = np.argmax(combined_scores)
         best_doc = documents[best_idx]
-        best_agent_data = cache_values[best_doc]
-        best_id = best_agent_data["object_id"]
+        best_agent_data = self.agent_cache.agent_values[best_doc]
+
+        # Convert detailed_results to the expected format for backwards compatibility
+        selection_details = [
+            {
+                "agent_name": result.agent_name,
+                "distance": result.raw_distance,
+                "normalized_distance": result.normalized_distance,
+                "average_rating": result.average_rating,
+                "normalized_rating": result.score_components.rating_score,
+                "rating_weight": result.score_components.weights.rating_weight,
+                "semantic_weight": result.score_components.weights.semantic_weight,
+                "lexical_score": result.score_components.lexical_score,
+                "combined_score": result.score_components.combined_score,
+                "rated_responses": result.rated_responses,
+                "lexical_weight": result.score_components.weights.lexical_weight,
+            }
+            for result in detailed_results
+        ]
 
         # Update timing stats
         self.total_time += time.time() - start_time
         self.query_count += 1
 
-        return best_id, best_agent_data["name"], selection_details
+        return best_agent_data["object_id"], best_agent_data["name"], selection_details
 
     def get_stats(self) -> Dict[str, float]:
         """Get timing statistics"""
