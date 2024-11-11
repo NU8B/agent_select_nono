@@ -22,6 +22,13 @@ class EmbeddingFn(BaseEmbeddingFunction):
         self.model_name = "dunzhang/stella_en_1.5B_v5"
         self._ensure_model_loaded()
 
+    @classmethod
+    def get_instance(cls):
+        """Singleton accessor"""
+        if not hasattr(cls, "_instance"):
+            cls._instance = cls()
+        return cls._instance
+
     def _ensure_model_loaded(self):
         if EmbeddingFn._shared_model is None:
             # Suppress warnings and logging

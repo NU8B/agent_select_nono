@@ -58,22 +58,14 @@ class StellaAlgorithm(SelectionAlgorithm):
 
         self.init_time = time.time() - start_time
 
-    def select(self, query: str) -> Tuple[str, str]:
-        """Select best agent for the given query using optimized processing"""
-        start_time = time.time()
-
-        result = self.chroma.query_data(query_text=[query])
-        documents = result["documents"][0]
-        distances = np.array(result["distances"][0])
-
-        # Use cached values from dict cache
-        cache_values = agent_dict_cache.values
-        agent_lookup = cache_values["agent_lookup"]
-        agent_values = cache_values["agent_values"]
-
-        # Get pre-calculated values for matched agents
-        agent_data = [agent_values[doc] for doc in documents]
-
+    def _compute_scores(
+        self,
+        query: str,
+        documents: List[str],
+        distances: np.ndarray,
+        agent_data: List[Dict],
+    ) -> np.ndarray:
+        """Compute all scores and return combined scores"""
         # Get pre-calculated weights and normalized values
         response_weights = np.array([data["response_weight"] for data in agent_data])
         semantic_weights = np.array([data["semantic_weight"] for data in agent_data])
@@ -82,28 +74,45 @@ class StellaAlgorithm(SelectionAlgorithm):
             [data["normalized_rating"] for data in agent_data]
         )
 
-        # Calculate lexical scores
+        # Calculate components
         lexical_scores = np.array(
             [compute_lexical_score(query, doc) for doc in documents]
         )
-
-        # Normalize distances
         normalized_distances = distances / distances.max()
 
-        # Compute final scores with all three components
-        combined_scores = (
+        # Compute final scores
+        return (
             (1 - normalized_distances**2) * semantic_weights
             + normalized_ratings * response_weights
             + lexical_scores * lexical_weights
         )
 
+    def select(self, query: str) -> Tuple[str, str]:
+        """Select best agent for the given query using optimized processing"""
+        start_time = time.time()
+
+        # Get matches from ChromaDB
+        result = self.chroma.query_data(query_text=[query])
+        documents = result["documents"][0]
+        distances = np.array(result["distances"][0])
+
+        # Get agent data
+        cache_values = agent_dict_cache.values
+        agent_lookup = cache_values["agent_lookup"]
+        agent_values = cache_values["agent_values"]
+        agent_data = [agent_values[doc] for doc in documents]
+
+        # Compute scores
+        combined_scores = self._compute_scores(query, documents, distances, agent_data)
+
+        # Select best match
         best_idx = np.argmax(combined_scores)
         best_doc = documents[best_idx]
         best_agent_data = agent_values[best_doc]
         best_id = best_agent_data["object_id"]
 
-        query_time = time.time() - start_time
-        self.total_time += query_time
+        # Update timing stats
+        self.total_time += time.time() - start_time
         self.query_count += 1
 
         return best_id, best_agent_data["name"]

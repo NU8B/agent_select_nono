@@ -3,16 +3,9 @@ import chromadb
 from chromadb.config import Settings
 from ..embedding_functions.Embedding_AutoModel import EmbeddingFn
 from ..embedding_functions.base_embedder import BaseEmbeddingFunction
-from functools import lru_cache
 
 
 class ChromaDB:
-    @staticmethod
-    @lru_cache(maxsize=1)
-    def get_embedding_function():
-        """Cache the embedding function to avoid reloading the model"""
-        return EmbeddingFn()
-
     def __init__(
         self,
         collection_name: str,
@@ -21,14 +14,14 @@ class ChromaDB:
     ):
         self.collection_name = collection_name
 
+        # Use singleton instance by default
+        self.embedding_function = embedding_function or EmbeddingFn.get_instance()
+
         # Initialize client with allow_reset=True
         self.client = chromadb.PersistentClient(
             path=persist_directory,
             settings=Settings(allow_reset=True, anonymized_telemetry=False),
         )
-
-        # Use provided embedding function or get default one
-        self.embedding_function = embedding_function or self.get_embedding_function()
 
         # Check if dimensions match
         try:
