@@ -1,4 +1,7 @@
-# Dictionary mapping queries to their ideal agents
+"""
+Our Custom Benchmark
+Dictionary mapping queries to their ideal agents
+"""
 
 QUERY_AGENT_MAPPING = {
     "Suggest a 2-week Italian food tour itinerary.": "Travel Planning Agent",
@@ -75,25 +78,16 @@ QUERY_AGENT_MAPPING = {
 
 def get_benchmark_metrics(predictions: dict) -> dict:
     """
-
     Calculate benchmark metrics from predictions
 
-
-
     Args:
-
         predictions: Dict mapping queries to predicted agents
 
-
-
     Returns:
-
         Dict containing accuracy metrics
-
     """
 
     total = len(QUERY_AGENT_MAPPING)
-
     correct = sum(
         1
         for query, agent in predictions.items()
@@ -110,29 +104,19 @@ def get_benchmark_metrics(predictions: dict) -> dict:
 
 def get_detailed_results(predictions: dict) -> list:
     """
-
     Get detailed results for each query
 
-
-
     Args:
-
         predictions: Dict mapping queries to predicted agents
 
-
-
     Returns:
-
         List of dicts containing query-level results
-
     """
 
     results = []
 
     for query, predicted_agent in predictions.items():
-
         correct_agent = QUERY_AGENT_MAPPING.get(query)
-
         results.append(
             {
                 "query": query,

@@ -203,10 +203,11 @@ class StellaTestAlgorithm:
         )
         normalized_distances = distances / distances.max()
 
-        # Final score combines three components:
-        # 1. Semantic score: (1 - normalized_distances²) gives higher score for smaller distances
-        # 2. Rating score: normalized_ratings weighted by response confidence
-        # 3. Lexical score: direct string similarity
+        """ Final score combines three components:
+        1. Semantic score: (1 - normalized_distances²) gives higher score for smaller distances
+        2. Rating score: normalized_ratings weighted by response confidence
+        3. Lexical score: direct string similarity """
+
         combined_scores = (
             (1 - normalized_distances**2) * semantic_weights
             + normalized_ratings * response_weights

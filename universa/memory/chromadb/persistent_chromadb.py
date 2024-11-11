@@ -31,8 +31,7 @@ class ChromaDB:
         Args:
             collection_name (str): Name for the collection
             persist_directory (str): Directory to store the database
-            embedding_function (Optional[BaseEmbeddingFunction]): Custom embedding function,
-                                                                defaults to EmbeddingFn
+            embedding_function (Optional[BaseEmbeddingFunction]): Custom embedding function, defaults to EmbeddingFn
         """
         self.collection_name = collection_name
         self.embedding_function = embedding_function or EmbeddingFn.get_instance()
@@ -120,6 +119,7 @@ class ChromaDB:
                     metadatas[i] if metadatas else {"source": "agent_description"}
                 )
 
+        # Add new documents
         if new_docs:
             self.collection.add(
                 documents=new_docs,
