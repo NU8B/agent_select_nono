@@ -3,7 +3,14 @@ import sys
 import time
 import numpy as np
 from typing import List, Dict, Tuple, Any
-import time
+from rich.console import Console
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    BarColumn,
+    TimeElapsedColumn,
+)
 from rapidfuzz import fuzz
 import hashlib
 
@@ -16,10 +23,43 @@ from benchmark.benchmark import Benchmark
 from universa.memory.chromadb.persistent_chromadb import ChromaDB
 from universa.utils.agent_compute_dict import agent_dict_cache
 
+console = Console()
+
 
 def compute_lexical_score(query: str, description: str) -> float:
     """Compute normalized lexical similarity score"""
     return fuzz.token_sort_ratio(query.lower(), description.lower()) / 100.0
+
+
+def write_results(
+    query: str,
+    agent_name: str,
+    expected_agent: str,
+    details: List[Dict],
+    is_correct: bool,
+) -> str:
+    """Format detailed results for a query"""
+    result_text = f"\n## Query: {query}\n"
+    result_text += f"**Benchmark**: [{'CORRECT' if is_correct else f'INCORRECT - Expected: {expected_agent}'}]**\n\n"
+    result_text += f"**Selected Agent**: {agent_name}\n"
+    result_text += "\n### Top 3 Agent Matches:\n\n"
+
+    sorted_details = sorted(details, key=lambda x: x["combined_score"], reverse=True)[
+        :3
+    ]
+    for detail in sorted_details:
+        result_text += f"**Agent**: {detail['agent_name']}\n"
+        result_text += f"- **Combined Score**: {detail['combined_score']:.4f}\n"
+        result_text += f"- **Distance**: {detail['distance']:.4f}\n"
+        result_text += f"- **Lexical Score**: {detail['lexical_score']:.4f}\n"
+        result_text += f"- **Average Rating**: {detail['average_rating']:.2f}\n"
+        result_text += f"- **Rated Responses**: {detail['rated_responses']}\n"
+        result_text += f"- **Distance Weight**: {detail['semantic_weight']:.2f}\n"
+        result_text += f"- **Rating Weight**: {detail['rating_weight']:.2f}\n"
+        result_text += f"- **Lexical Weight**: {detail['lexical_weight']:.2f}\n\n"
+
+    result_text += "\n---\n"
+    return result_text
 
 
 class StellaAlgorithm(SelectionAlgorithm):
@@ -39,12 +79,9 @@ class StellaAlgorithm(SelectionAlgorithm):
         descriptions = [
             agent["description"] + "\n\n" + agent["system_prompt"] for agent in agents
         ]
-        descriptions_str = "||".join(
-            sorted(descriptions)
-        )  # Join sorted descriptions with delimiter
-        collection_hash = hashlib.sha256(descriptions_str.encode()).hexdigest()[
-            :8
-        ]  # Use first 8 chars
+        descriptions_str = "||".join(sorted(descriptions))
+        collection_hash = hashlib.sha256(descriptions_str.encode()).hexdigest()[:8]
+
         self.chroma = ChromaDB(
             collection_name=f"agent_descriptions_benchmark_{collection_hash}"
         )
@@ -64,8 +101,8 @@ class StellaAlgorithm(SelectionAlgorithm):
         documents: List[str],
         distances: np.ndarray,
         agent_data: List[Dict],
-    ) -> np.ndarray:
-        """Compute all scores and return combined scores"""
+    ) -> Tuple[np.ndarray, List[Dict]]:
+        """Compute scores and return combined scores with details"""
         # Get pre-calculated weights and normalized values
         response_weights = np.array([data["response_weight"] for data in agent_data])
         semantic_weights = np.array([data["semantic_weight"] for data in agent_data])
@@ -81,14 +118,40 @@ class StellaAlgorithm(SelectionAlgorithm):
         normalized_distances = distances / distances.max()
 
         # Compute final scores
-        return (
+        combined_scores = (
             (1 - normalized_distances**2) * semantic_weights
             + normalized_ratings * response_weights
             + lexical_scores * lexical_weights
         )
 
-    def select(self, query: str) -> Tuple[str, str]:
-        """Select best agent for the given query using optimized processing"""
+        # Create selection details
+        selection_details = [
+            {
+                "agent_name": data["name"],
+                "distance": float(dist),
+                "normalized_distance": float(norm_dist),
+                "average_rating": float(data["average_rating"]),
+                "normalized_rating": float(data["normalized_rating"]),
+                "rating_weight": float(data["response_weight"]),
+                "semantic_weight": float(data["semantic_weight"]),
+                "lexical_score": float(lex_score),
+                "combined_score": float(score),
+                "rated_responses": data["rated_responses"],
+                "lexical_weight": float(data["lexical_weight"]),
+            }
+            for data, dist, norm_dist, lex_score, score in zip(
+                agent_data,
+                distances,
+                normalized_distances,
+                lexical_scores,
+                combined_scores,
+            )
+        ]
+
+        return combined_scores, selection_details
+
+    def select(self, query: str) -> Tuple[str, str, List[Dict]]:
+        """Select best agent with optimized processing"""
         start_time = time.time()
 
         # Get matches from ChromaDB
@@ -102,8 +165,10 @@ class StellaAlgorithm(SelectionAlgorithm):
         agent_values = cache_values["agent_values"]
         agent_data = [agent_values[doc] for doc in documents]
 
-        # Compute scores
-        combined_scores = self._compute_scores(query, documents, distances, agent_data)
+        # Compute scores and get details
+        combined_scores, selection_details = self._compute_scores(
+            query, documents, distances, agent_data
+        )
 
         # Select best match
         best_idx = np.argmax(combined_scores)
@@ -115,7 +180,7 @@ class StellaAlgorithm(SelectionAlgorithm):
         self.total_time += time.time() - start_time
         self.query_count += 1
 
-        return best_id, best_agent_data["name"]
+        return best_id, best_agent_data["name"], selection_details
 
     def get_stats(self) -> Dict[str, float]:
         """Get timing statistics"""
@@ -129,28 +194,112 @@ class StellaAlgorithm(SelectionAlgorithm):
         }
 
 
+def write_benchmark_results(results: List[Dict], output_dir: str, stats: Dict) -> None:
+    """Write detailed benchmark results to markdown file"""
+    with open(
+        os.path.join(output_dir, "benchmark_result.md"), "w", encoding="utf-8"
+    ) as f:
+        # Write header and summary
+        f.write("# Agent Selection Results\n\n")
+        f.write("## Benchmark Summary\n\n")
+
+        total_queries = len(results)
+        correct_predictions = sum(1 for r in results if r["is_correct"])
+        accuracy = correct_predictions / total_queries
+
+        f.write(f"**Accuracy**: {accuracy:.2%}\n")
+        f.write(f"**Correct Predictions**: {correct_predictions}/{total_queries}\n\n")
+
+        # Sort results into correct and incorrect
+        incorrect_results = [r for r in results if not r["is_correct"]]
+        correct_results = [r for r in results if r["is_correct"]]
+
+        # Write incorrect predictions first
+        if incorrect_results:
+            f.write("## ❌ Incorrect Predictions\n")
+            for result in incorrect_results:
+                f.write(result["details"])
+
+        # Write correct predictions second
+        if correct_results:
+            f.write("## ✅ Correct Predictions\n")
+            for result in correct_results:
+                f.write(result["details"])
+
+
 def main():
-    """Example usage of the benchmark"""
+    """Main benchmark execution"""
+    output_dir = os.path.join("output", "benchmark")
+    os.makedirs(output_dir, exist_ok=True)
+
     benchmark = Benchmark()
     total_start_time = time.time()
     algorithm = StellaAlgorithm(benchmark.agents, benchmark.agent_ids)
 
-    print("\nProcessing queries...")
-    accuracy = benchmark.validate(algorithm, verbose=True)
+    # Process queries with progress bar
+    results = []
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task(
+            "[cyan]Processing queries...", total=len(benchmark.queries)
+        )
 
-    total_queries = len(benchmark.queries)
-    correct_predictions = int(accuracy * total_queries)
+        for query in benchmark.queries:
+            result_id, result_agent, details = algorithm.select(query["query"])
+            is_correct = query["object_id"] == result_id
+
+            results.append(
+                {
+                    "query": query["query"],
+                    "predicted_agent": result_agent,
+                    "expected_agent": query["agent"],
+                    "is_correct": is_correct,
+                    "details": write_results(
+                        query["query"],
+                        result_agent,
+                        query["agent"],
+                        details,
+                        is_correct,
+                    ),
+                }
+            )
+
+            progress.advance(task)
+
+    # Calculate final metrics
     total_time = time.time() - total_start_time
     stats = algorithm.get_stats()
+    correct_predictions = sum(1 for r in results if r["is_correct"])
+    total_queries = len(results)
+    accuracy = correct_predictions / total_queries
 
-    # Print clean summary
-    print("\nBenchmark Results:")
-    print(f"Accuracy: {correct_predictions}/{total_queries} ({accuracy:.1%})")
-    print(f"Total Runtime: {total_time:.4f} seconds")
-    print(f"├─ Initialization Time: {stats['initialization_time']:.4f} seconds")
-    print(f"└─ Query Processing Time: {stats['total_query_time']:.4f} seconds")
-    print(f"   ├─ Number of Queries: {stats['query_count']}")
-    print(f"   └─ Average Query Time: {stats['average_query_time']:.4f} seconds")
+    # Write detailed results to file
+    write_benchmark_results(results, output_dir, stats)
+
+    # Print summary to console
+    console.print(f"\n📂 Results saved to: [cyan]{output_dir}[/cyan]")
+    console.print(
+        f"⏱️  [bold white]Total execution time: {total_time:.2f} seconds[/bold white]"
+    )
+    console.print(
+        f"⚙️  Initialization time: [bold yellow]{stats['initialization_time']:.2f}[/bold yellow] seconds"
+    )
+    console.print(
+        f"🔄 Query processing time: [bold yellow]{stats['total_query_time']:.2f}[/bold yellow] seconds"
+    )
+    console.print(f"   ├─ Number of queries: [dim]{stats['query_count']}[/dim]")
+    console.print(
+        f"   ├─ Average query time: [dim]{stats['average_query_time']:.4f}[/dim] seconds"
+    )
+    console.print(
+        f"   └─ Accuracy: [dim]{correct_predictions}/{total_queries}[/dim] ({accuracy:.1%})"
+    )
 
 
 if __name__ == "__main__":
