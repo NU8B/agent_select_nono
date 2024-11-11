@@ -102,7 +102,7 @@ class StellaAlgorithm(SelectionAlgorithm):
         self.total_time = 0
         self.query_count = 0
         self.agent_cache = AgentCache()
-        self.scoring = AgentScoring(WeightConfig())  # Use default config or pass custom
+        self.scoring = AgentScoring(WeightConfig()) 
         super().__init__(agents, ids)
 
     def initialize(self, agents: List[Dict[str, Any]], ids: List[str]) -> None:
@@ -247,29 +247,10 @@ def main():
     stats = algorithm.get_stats()
     correct_predictions = sum(1 for r in results if r["is_correct"])
     total_queries = len(results)
-    accuracy = correct_predictions / total_queries
 
-    # Write detailed results to file
+    # Write results and print summary
     result_writer.write_benchmark_results(results, output_dir, stats)
-
-    # Print summary to console
-    console.print(f"\n📂 Results saved to: [cyan]{output_dir}[/cyan]")
-    console.print(
-        f"⏱️  [bold white]Total execution time: {total_time:.2f} seconds[/bold white]"
-    )
-    console.print(
-        f"⚙️  Initialization time: [bold yellow]{stats['initialization_time']:.2f}[/bold yellow] seconds"
-    )
-    console.print(
-        f"🔄 Query processing time: [bold yellow]{stats['total_query_time']:.2f}[/bold yellow] seconds"
-    )
-    console.print(f"   ├─ Number of queries: [dim]{stats['query_count']}[/dim]")
-    console.print(
-        f"   ├─ Average query time: [dim]{stats['average_query_time']:.4f}[/dim] seconds"
-    )
-    console.print(
-        f"   └─ Accuracy: [dim]{correct_predictions}/{total_queries}[/dim] ({accuracy:.1%})"
-    )
+    result_writer.print_summary(output_dir, total_time, stats, correct_predictions, total_queries)
 
 
 if __name__ == "__main__":

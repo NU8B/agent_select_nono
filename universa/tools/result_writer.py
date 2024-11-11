@@ -1,5 +1,8 @@
 import os
 from typing import List, Dict
+from rich.console import Console
+
+console = Console()
 
 class ResultWriter:
     """Handles writing benchmark results to files"""
@@ -66,4 +69,27 @@ class ResultWriter:
             if correct_results:
                 f.write("## ✅ Correct Predictions\n")
                 for result in correct_results:
-                    f.write(result["details"]) 
+                    f.write(result["details"])
+
+    @staticmethod
+    def print_summary(output_dir: str, total_time: float, stats: Dict, correct_predictions: int, total_queries: int) -> None:
+        """Print execution summary to console"""
+        accuracy = correct_predictions / total_queries
+        
+        console.print(f"\n📂 Results saved to: [cyan]{output_dir}[/cyan]")
+        console.print(
+            f"⏱️  [bold white]Total execution time: {total_time:.2f} seconds[/bold white]"
+        )
+        console.print(
+            f"⚙️  Initialization time: [bold yellow]{stats['initialization_time']:.2f}[/bold yellow] seconds"
+        )
+        console.print(
+            f"🔄 Query processing time: [bold yellow]{stats['total_query_time']:.2f}[/bold yellow] seconds"
+        )
+        console.print(f"   ├─ Number of queries: [dim]{stats['query_count']}[/dim]")
+        console.print(
+            f"   ├─ Average query time: [dim]{stats['average_query_time']:.4f}[/dim] seconds"
+        )
+        console.print(
+            f"   └─ Accuracy: [dim]{correct_predictions}/{total_queries}[/dim] ({accuracy:.1%})"
+        )
