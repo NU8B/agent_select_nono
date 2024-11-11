@@ -13,96 +13,77 @@ class ChromaDB:
         embedding_function: Optional[BaseEmbeddingFunction] = None,
     ):
         self.collection_name = collection_name
-
-        # Use singleton instance by default
         self.embedding_function = embedding_function or EmbeddingFn.get_instance()
 
-        # Initialize client with allow_reset=True
+        # Initialize client
         self.client = chromadb.PersistentClient(
             path=persist_directory,
             settings=Settings(allow_reset=True, anonymized_telemetry=False),
         )
 
-        # Check if dimensions match
-        try:
-            existing_collection = self.client.get_collection(collection_name)
-            sample_embedding = self.embedding_function.create_embeddings(["test"])[0]
+        # Initialize or reset collection
+        self._initialize_collection()
 
-            if len(sample_embedding) != len(
-                existing_collection.peek()["embeddings"][0]
-            ):
-                print(f"Model dimensions changed. Resetting collection...")
-                self.client.reset()
-                self.client = chromadb.PersistentClient(
-                    path=persist_directory,
-                    settings=Settings(allow_reset=True, anonymized_telemetry=False),
-                )
-        except Exception:
-            pass
-
+    def _initialize_collection(self) -> None:
+        """Initialize collection with proper dimension handling"""
         try:
+            # Try to get existing collection
             self.collection = self.client.get_collection(
-                name=collection_name,
-                embedding_function=self.embedding_function,
-            )
-        except ValueError:
-            self.collection = self.client.create_collection(
-                name=collection_name,
-                embedding_function=self.embedding_function,
+                name=self.collection_name, embedding_function=self.embedding_function
             )
 
-    def reset_collection(self, collection_name: str) -> None:
-        """Reset specific collection"""
-        try:
-            self.client.delete_collection(collection_name)
-            print(f"Deleted collection: {collection_name}")
-        except Exception as e:
-            print(f"Error deleting collection: {e}")
+            # Verify dimensions match
+            sample_embedding = self.embedding_function.create_embeddings(["test"])[0]
+            if self.get_count() > 0:
+                existing_dim = len(self.collection.peek()["embeddings"][0])
+                if len(sample_embedding) != existing_dim:
+                    print(
+                        f"Embedding dimensions changed ({existing_dim} -> {len(sample_embedding)}). Resetting collection..."
+                    )
+                    self.client.delete_collection(self.collection_name)
+                    self.collection = self.client.create_collection(
+                        name=self.collection_name,
+                        embedding_function=self.embedding_function,
+                    )
+
+        except ValueError:
+            # Collection doesn't exist, create new one
+            self.collection = self.client.create_collection(
+                name=self.collection_name,
+                embedding_function=self.embedding_function,
+            )
 
     def add_data(
         self,
         documents: List[str],
         ids: List[str],
         metadatas: Optional[List[Dict[str, Any]]] = None,
-        embeddings: Optional[List[List[float]]] = None,
     ) -> None:
-        """Add data to collection if not already present"""
-        try:
-            # Get existing IDs or empty set if collection is empty
-            try:
-                existing_ids = set(self.collection.get()["ids"])
-            except Exception:
-                existing_ids = set()
+        """Add new data to collection"""
+        existing_ids = (
+            set(self.collection.get()["ids"]) if self.get_count() > 0 else set()
+        )
 
-            # Filter out documents that already exist
-            new_docs = []
-            new_ids = []
-            new_metadatas = []
+        # Filter out existing documents
+        new_docs = []
+        new_ids = []
+        new_metadatas = []
 
-            for i, doc_id in enumerate(ids):
-                if doc_id not in existing_ids:
-                    new_docs.append(documents[i])
-                    new_ids.append(doc_id)
-                    if metadatas:
-                        new_metadatas.append(metadatas[i])
-                    else:
-                        # Add default metadata for each document if none provided
-                        new_metadatas.append({"source": "agent_description"})
-
-            if new_docs:
-                self.collection.add(
-                    documents=new_docs,
-                    ids=new_ids,
-                    metadatas=new_metadatas,
-                    embeddings=embeddings,
+        for i, doc_id in enumerate(ids):
+            if doc_id not in existing_ids:
+                new_docs.append(documents[i])
+                new_ids.append(doc_id)
+                new_metadatas.append(
+                    metadatas[i] if metadatas else {"source": "agent_description"}
                 )
-                print(f"Added {len(new_docs)} new documents to collection")
-            else:
-                print("All documents already exist in collection")
 
-        except Exception as e:
-            print(f"Error adding data to collection: {e}")
-            raise
+        if new_docs:
+            self.collection.add(
+                documents=new_docs,
+                ids=new_ids,
+                metadatas=new_metadatas,
+            )
+            print(f"Added {len(new_docs)} new documents to collection")
 
     def query_data(
         self,
@@ -111,18 +92,12 @@ class ChromaDB:
         where: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Query the collection"""
-        try:
-            return self.collection.query(
-                query_texts=query_text, n_results=n_results, where=where
-            )
-        except Exception as e:
-            print(f"Error querying collection: {e}")
-            raise
+        return self.collection.query(
+            query_texts=query_text,
+            n_results=n_results,
+            where=where,
+        )
 
     def get_count(self) -> int:
-        """Get the number of documents in the collection"""
-        try:
-            return self.collection.count()
-        except Exception as e:
-            print(f"Error getting collection count: {e}")
-            return 0
+        """Get number of documents in collection"""
+        return self.collection.count()
